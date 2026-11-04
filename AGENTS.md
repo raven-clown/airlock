@@ -21,11 +21,12 @@ On Windows without a C compiler, run `go test ./...` locally. CI runs `-race` on
 
 ## Layout
 
-Only `cmd/airlock` exists so far, with `version` and `help`. The rest is the planned layout from `docs/design.md`:
+Built so far: `cmd/airlock` (`version`, `help`) and `internal/naming`. The rest is the planned layout from `docs/design.md`:
 
 - `cmd/airlock`: the CLI (`serve`, `validate`, `migrate`, `check`, `tools`, `keys new`, `bootstrap-key`, `version`)
 - `auth`, `policy`, `backend`, `audit`, `ratelimit`: public plugin interfaces and registries, with built-ins in subpackages
 - `telemetry`: Prometheus metrics and OTLP tracing
+- `internal/naming`: building, checking and splitting `<server>__<tool>` names
 - `internal/config`: YAML loading, env overrides, file watching
 - `internal/store`: SQLite and Postgres stores and migrations
 - `internal/provision`: syncing file-declared resources into the store
