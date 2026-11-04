@@ -49,6 +49,16 @@ Where airlock is better:
 - Against agentgateway: it does one job. A Go developer can read the whole codebase in an afternoon, and a typical setup is a handful of API calls or one short file. agentgateway covers far more ground (A2A, LLM routing, Kubernetes) with Rust and CEL, which is more to learn. In the mothership set, `rosetta` and `transponder` cover that ground instead.
 - Against all three: airlock answers "can alice call `github__delete_repo`, and which rule decided it" without making the call. Permission bugs in a gateway are security bugs, and being able to test them matters.
 
+### What the others charge for
+
+airlock has no paid edition and no license key. SSO, roles and permissions, audit logs, multi-tenancy, clustering and the admin API are all in the Apache-2.0 build, and the README says so. Here is what the other projects keep for a paid product, limited to what their own pages say (checked 2026-11-04):
+
+- **Docker.** The open-source MCP Gateway has no per-user model. Docker sells a separate MCP Enterprise Gateway, through "Contact sales" with no public price, whose product page lists sign-in through your identity provider with policy following your groups, per-tool allow and deny rules, and "a structured event per evaluation" streamed to a SIEM. That is close to airlock's core feature set. ([product page](https://www.docker.com/products/mcp-enterprise-gateway/))
+- **agentgateway.** The open-source project has JWT auth, CEL-based RBAC and rate limiting. Solo.io sells Solo Enterprise for agentgateway under a separate license, which its launch post says adds automatic token exchange, "cryptographically verifiable" audit trails, tool server fingerprinting and versioning, secure elicitation, a hardened distribution and 24x7 support. ([launch post](https://solo.io/blog/introducing-solo-enterprise-for-agentgateway), [docs](https://docs.solo.io/gateway/2.0.x/ai/about/)) Solo's related agentregistry product lists SSO, RBAC, audit logging and rate limiting as enterprise-only in its own comparison. ([agentregistry comparison](https://docs.solo.io/agentregistry/latest/about/oss-enterprise/))
+- **MCPJungle.** Its README describes a self-hosted gateway and mentions no paid edition, hosted offering or pricing. Nothing to compare on price, so the comparison above is on features only. ([README](https://github.com/mcpjungle/MCPJungle))
+
+Token exchange and SIEM-grade audit, which both vendors sell, are on airlock's roadmap as free features (see contributor entry points and open choices).
+
 ## SDK choice: mark3labs/mcp-go
 
 airlock builds on `github.com/mark3labs/mcp-go` (v1.x), not the official `github.com/modelcontextprotocol/go-sdk`.
@@ -229,7 +239,7 @@ Plugin config arrives as JSON, whether it came from YAML or from the API, so a p
 
 - Drivers: `modernc.org/sqlite` and `github.com/jackc/pgx/v5` through `database/sql`. Both are pure Go, so builds need no cgo.
 - Config: `storage.driver` is `sqlite` (default) or `postgres`, and `storage.dsn` defaults to `file:airlock.db` in the working directory.
-- Queries are hand-written SQL kept to what both engines support. Every store test runs against SQLite, and against Postgres too when `AIRLOCK_TEST_POSTGRES_DSN` is set (CI sets it with a Postgres service container).
+- Queries are hand-written SQL kept to what both engines support. Every store test runs against SQLite, and against Postgres too under the `integration` build tag.
 - Migrations are numbered SQL files embedded in the binary, one folder per engine, applied at startup inside a transaction and tracked in `schema_migrations`. On Postgres, an advisory lock stops two replicas from migrating at once. `airlock migrate` runs them without starting the server. A binary refuses to start against a schema newer than it knows.
 - SQLite runs in WAL mode with a busy timeout, and airlock keeps a single writer connection.
 
@@ -531,15 +541,16 @@ Commands that need a running gateway talk to its admin API using `--url` and `--
 
 ## Testing
 
-- Test-driven, unit tests next to each package. No `-race` in local runs on Windows (no gcc). CI runs `-race` on Linux.
+- Test-driven, unit tests next to each package, table-driven where it fits, following CONTRIBUTING.md. No network in unit tests and no bare `time.Sleep`.
+- CI runs tests on Linux, macOS and Windows (`-race` on the first two), lint, CodeQL and dependency review, and fails below 80% total coverage. Local runs on Windows skip `-race` because there is no C compiler.
 - Policy and rate limit logic: table tests, including deny-wins, default-deny, and glob edge cases.
 - OIDC: an in-test issuer on `httptest` serving discovery and JWKS, signing tokens with a generated RSA key. Covers expired, wrong audience, wrong issuer, unknown `kid` and rotated keys.
-- Store: one shared test suite run against every driver. SQLite always, Postgres when `AIRLOCK_TEST_POSTGRES_DSN` is set. Migrations are tested from empty and from each earlier version.
+- Store: one shared test suite run against every driver. SQLite always. Postgres runs behind the `integration` build tag, using `AIRLOCK_TEST_POSTGRES_DSN`, and CI runs it with a Postgres service container. Migrations are tested from empty and from each earlier version.
 - Provisioning: file-owned rows appear, update, disappear, refuse API edits, and never touch API-owned rows.
 - Admin API: a test walks every operation in `api/openapi.yaml` and fails if a route is missing, and request and response bodies are checked against the schema. Pagination, `If-Match`, merge patch, role checks and secret masking each get their own tests.
-- Backends: Streamable HTTP tests use in-process mcp-go servers on `httptest`. stdio tests build a tiny test MCP server from `internal/testserver` in `TestMain` and run it as a real process, so they work on Windows too.
+- Backends: Streamable HTTP tests use in-process mcp-go servers on `httptest`. stdio tests build a tiny test MCP server from `internal/testutil/mcpserver` in `TestMain` and run it as a real process, so they work on Windows too.
 - Gateway end to end: start airlock with an empty SQLite store, set it up only through the admin API with the bootstrap key, connect with the mcp-go client as alice, bob and ci-bot, then check visible tools, denied calls, rate limits, audit records over the API, `list_changed` propagation, and session hijack rejection. A second run sets up the same state from a YAML file and checks the results match.
-- Two instances on one Postgres: a rule added through one is enforced by the other within a few seconds.
+- Two instances on one Postgres (integration tag): a rule added through one is enforced by the other within a few seconds.
 - `airlock check` and `airlock validate` get golden-output tests.
 
 ## Demo
@@ -556,6 +567,10 @@ Commands that need a running gateway talk to its admin API using `--url` and `--
 ## Contributor entry points
 
 Good first pieces, each behind an existing interface: CEL or OPA policy, Postgres or Redis rate limiter, webhook / Kafka / OpenSearch audit sinks, legacy SSE backend, a backend that runs servers in Docker, OAuth 2.0 token exchange (RFC 8693) for HTTP backends, Postgres `LISTEN/NOTIFY` for faster change pickup, a Helm chart, and client libraries generated from the OpenAPI file.
+
+## Repository
+
+The repository root carries the shared files from `mothership/contributing/`: CONTRIBUTING.md, AGENTS.md (with CLAUDE.md, GEMINI.md and `.github/copilot-instructions.md` pointing to it), SECURITY.md, CODE_OF_CONDUCT.md, CHANGELOG.md, LICENSE, issue and pull request templates, CODEOWNERS, CI workflows, Dependabot, `.golangci.yml`, `.testcoverage.yml`, the Makefile and `.gitattributes`. airlock adds to them and never loosens them. Every change is committed right away with a Conventional Commits message, and AGENTS.md changes in the same commit whenever commands, layout or rules change. The first milestone's issues are drafted in `docs/issues.md` once this spec is approved.
 
 ## Decisions made
 
@@ -580,6 +595,7 @@ Good first pieces, each behind an existing interface: CEL or OPA policy, Postgre
 19. Optimistic concurrency with `version` and `If-Match`, updates with JSON merge patch.
 20. Plugins are compiled in through `Register` functions in public packages, configured with JSON.
 21. Module `github.com/raven-clown/airlock`, Apache-2.0, `go 1.26` in go.mod, first release v0.1.0.
+22. No paid edition. Every feature, including SSO, roles, audit, multi-tenancy, clustering and the admin API, ships in the Apache-2.0 build.
 
 ## Open choices
 
