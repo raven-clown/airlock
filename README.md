@@ -48,7 +48,7 @@ There is no paid edition and no license key. SSO, roles and permissions, audit l
 
 ## A taste
 
-This is the planned interface. It doesn't work yet.
+The YAML file below works today with `airlock serve --config airlock.yaml`. The admin API and `airlock check` are planned and don't work yet.
 
 ```shell
 airlock serve
