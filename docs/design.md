@@ -1,6 +1,6 @@
 # airlock design
 
-Status: draft for review
+Status: approved
 Date: 2026-11-04
 
 airlock is an MCP gateway. Clients connect to one MCP endpoint. Behind it sit many MCP servers, reached over stdio or Streamable HTTP. airlock adds login (OIDC and API keys), per-user and per-group tool permissions, an audit log, rate limits, and tool lists filtered to what each caller may use.
@@ -24,7 +24,7 @@ It follows the shared contract in `mothership/CONTRACT.md`. Where this document 
 - Running MCP servers in containers. airlock starts stdio commands as given, and connects to HTTP servers by URL.
 - Prompts and resources. v1 aggregates tools only.
 - Forwarding sampling, elicitation and roots requests from backends back to clients.
-- Multi-tenancy. v1 has one tenant per instance (see open choices).
+- Organisations. v1 runs one org per instance, but every table already has `org_id` (see Later).
 - A2A, ACP, AG-UI or LLM traffic. That is `rosetta` and `transponder`.
 
 ## How airlock compares
@@ -57,13 +57,11 @@ airlock has no paid edition and no license key. SSO, roles and permissions, audi
 - **agentgateway.** The open-source project has JWT auth, CEL-based RBAC and rate limiting. Solo.io sells Solo Enterprise for agentgateway under a separate license, which its launch post says adds automatic token exchange, "cryptographically verifiable" audit trails, tool server fingerprinting and versioning, secure elicitation, a hardened distribution and 24x7 support. ([launch post](https://solo.io/blog/introducing-solo-enterprise-for-agentgateway), [docs](https://docs.solo.io/gateway/2.0.x/ai/about/)) Solo's related agentregistry product lists SSO, RBAC, audit logging and rate limiting as enterprise-only in its own comparison. ([agentregistry comparison](https://docs.solo.io/agentregistry/latest/about/oss-enterprise/))
 - **MCPJungle.** Its README describes a self-hosted gateway and mentions no paid edition, hosted offering or pricing. Nothing to compare on price, so the comparison above is on features only. ([README](https://github.com/mcpjungle/MCPJungle))
 
-Token exchange and SIEM-grade audit, which both vendors sell, are on airlock's roadmap as free features (see contributor entry points and open choices).
+Token exchange and SIEM-grade audit, which both vendors sell, are on airlock's roadmap as free features (see contributor entry points and Later).
 
 ## SDK choice: mark3labs/mcp-go
 
-airlock builds on `github.com/mark3labs/mcp-go` (v1.x), not the official `github.com/modelcontextprotocol/go-sdk`.
-
-Reasons:
+airlock builds on `github.com/mark3labs/mcp-go` (v1.x), not the official `github.com/modelcontextprotocol/go-sdk`. The contract now makes mcp-go the shared MCP library for all four projects. The reasons it fits airlock:
 
 - `server.WithToolFilter` is applied on both `tools/list` and `tools/call`, so a hidden tool cannot be called. That is exactly airlock's access boundary, and it already exists and is tested upstream.
 - `server.WithToolHandlerMiddleware` gives an ordered chain around every call, which is where rate limits, audit and metrics go.
@@ -250,13 +248,15 @@ Plugin config arrives as JSON, whether it came from YAML or from the API, so a p
 | `servers` | Backend definitions: name, transport, command/args/env or url/auth, timeouts, `required`, `enabled` |
 | `rules` | Policy rules: name, subjects, allow, deny |
 | `rate_limits` | Rate limit rules |
-| `api_keys` | Name, SHA-256 hash, groups, created, expires, last used, revoked |
+| `api_keys` | Name, owner (empty for service keys), SHA-256 hash, groups, created, expires, last used, revoked |
 | `role_bindings` | Admin API roles: subject pattern and role |
 | `settings` | Key-value settings: OIDC, allowed origins, audit options |
 | `audit_events` | One row per tool call |
-| `revision` | One row, bumped on every write |
+| `revision` | One row per org, bumped on every write |
 
-Every managed row has `source` (`file` or `api`), `version` (for optimistic concurrency), `created_at` and `updated_at`.
+| `project_bindings` | Subject pattern and the `X-Project` value to set for it |
+
+Every row in every table has `org_id`, `default` until organisations ship, and every query filters by it, as the contract requires. Multi-tenancy then needs no data migration. Every managed row also has `source` (`file` or `api`), `version` (an integer, for optimistic concurrency), `created_at` and `updated_at`.
 
 ### Secrets at rest
 
@@ -283,16 +283,16 @@ Resources declared in the config file (`servers`, `rules`, `rate_limits`, `api_k
 - Keys look like `alk_` followed by 32 random bytes in base64url.
 - Only the SHA-256 hash is stored. The keys are random and long, so a slow hash adds nothing.
 - Each key has a `name` (the subject becomes `key:<name>`), optional `groups` and an optional expiry. `last_used_at` is updated at most once a minute per key.
-- Created through `POST /admin/v1/api-keys`, which returns the key once. For file-provisioned keys, `airlock keys new --name ci-bot` prints a key and the hash line to paste.
+- Service keys are created by an admin through `POST /admin/v1/api-keys`, which returns the key once. Personal keys are created by any member through `POST /admin/v1/me/api-keys`. A personal key acts as its owner: the subject is the owner's, and the groups are the owner's groups when the key was made. For file-provisioned keys, `airlock keys new --name ci-bot` prints a key and the hash line to paste.
 - A bearer token that starts with `alk_` is handled by the API key authenticator. Anything else goes to OIDC.
 
 ### First start
 
-When the store has no role bindings at all, airlock creates an API key named `bootstrap` with the `admin` role and prints it once to stderr as plain text, outside the JSON log stream so it does not end up in log storage. The console uses it to set up OIDC and the first real admin binding, then the bootstrap key can be revoked. If it is lost before that, `airlock bootstrap-key` (run on the host, with direct access to the store) issues a new one. The file can instead declare `role_bindings`, which skips the bootstrap key.
+This works with no config file at all, as the contract requires. When the store has no role bindings at all, airlock creates an API key named `bootstrap` with the `admin` role and prints it once to stderr as plain text, outside the JSON log stream so it does not end up in log storage. The console uses it to set up OIDC and the first real admin binding, then the bootstrap key can be revoked. If it is lost before that, `airlock bootstrap-key` (run on the host, with direct access to the store) issues a new one. The file can instead declare `role_bindings`, which skips the bootstrap key.
 
 ### stdio mode
 
-`airlock serve --stdio` serves one local client over stdin and stdout. There is no HTTP request to read a token from, so the identity comes from `stdio.identity` in config (default subject `local`). Policies still apply, which makes stdio mode handy for trying out a policy.
+`airlock serve --stdio` serves one local client over stdin and stdout. There is no HTTP request to read a token from, so the identity comes from `stdio.identity` in config (default subject `local`). Policies still apply, which makes stdio mode handy for trying out a policy. In stdio mode all logs go to stderr, so stdout carries only the protocol.
 
 ## Authorization
 
@@ -331,10 +331,11 @@ DENY  github__delete_repo  rule=eng-github  reason="denied by pattern github__de
 
 The admin API uses the same identities as `/mcp`. Access to it comes from `role_bindings`, which map a subject pattern (same syntax as rules) to a role:
 
-- `viewer`: every `GET` endpoint, including audit and usage, plus `POST /check`.
+- `member`: self-service. `GET /me` (identity, groups, roles, project), `GET /me/tools` (the tools this caller sees, with the deciding rule), `GET /audit` limited to the caller's own records, and the caller's own personal API keys.
+- `viewer`: everything a member can do, plus every `GET` endpoint for all callers (audit and usage included) and `POST /check`. Secret values stay hidden.
 - `admin`: everything.
 
-A caller with no binding gets 403 on every admin route. MCP tool rules and admin roles are separate, so being allowed to call tools never grants admin access.
+These are the three roles every project in the set shares. A caller with no binding gets 403 on every admin route. On first start airlock also creates a binding of `*` to `member`, so every logged-in person can see their own tools and keys. An admin can delete it. MCP tool rules and admin roles are separate, so being allowed to call tools never grants admin access.
 
 An admin can create stdio servers, which means running commands on the airlock host. The docs say this plainly: the `admin` role is as strong as a shell on that machine. `stdio.allowed_commands` (a list of globs, empty means any) narrows what can be started, and it can only be set in the file, never through the API.
 
@@ -354,8 +355,11 @@ JSON under `/admin/v1/`, described by `api/openapi.yaml` (OpenAPI 3.0.3). The fi
 | `GET /tools` | The full catalog with prefixed names, filterable by `server` |
 | `GET /rules`, `POST /rules`, `GET/PATCH/DELETE /rules/{name}` | Tool rules |
 | `GET /rate-limits`, `POST /rate-limits`, `GET/PATCH/DELETE /rate-limits/{name}` | Rate limit rules |
-| `GET /api-keys`, `POST /api-keys`, `GET/PATCH /api-keys/{name}`, `POST /api-keys/{name}/revoke` | API keys. The key value is only in the `POST` response |
+| `GET /api-keys`, `POST /api-keys`, `GET/PATCH /api-keys/{name}`, `POST /api-keys/{name}/revoke` | Service API keys. The key value is only in the `POST` response |
 | `GET /role-bindings`, `POST /role-bindings`, `DELETE /role-bindings/{id}` | Admin roles |
+| `GET /project-bindings`, `POST /project-bindings`, `DELETE /project-bindings/{id}` | Which `X-Project` value airlock sets for a caller |
+| `GET /me`, `GET /me/tools` | The caller's identity and visible tools |
+| `GET /me/api-keys`, `POST /me/api-keys`, `POST /me/api-keys/{name}/revoke` | The caller's personal API keys |
 | `GET /settings`, `PATCH /settings` | OIDC, allowed origins, audit options |
 | `POST /check` | Decisions for a subject, groups and a list of tools (or every tool), with the deciding rule |
 | `GET /audit` | Audit records, newest first, filterable by `subject`, `server`, `tool`, `outcome`, `since`, `until` |
@@ -367,9 +371,10 @@ JSON under `/admin/v1/`, described by `api/openapi.yaml` (OpenAPI 3.0.3). The fi
 
 ### Conventions
 
-- Lists take `cursor` and `limit` (default 50, max 500) and return `{"items": [...], "next_cursor": "..."}`. `next_cursor` is empty on the last page. Cursors are opaque base64 of the sort key and id, so new rows never shift a page.
-- Errors are `{"error": {"code": "not_found", "message": "...", "field": "..."}}`, with codes `invalid`, `not_found`, `conflict`, `managed_by_file`, `version_mismatch`, `forbidden`, `unauthorized`.
-- Every resource has `version`. `PATCH` and `DELETE` accept `If-Match: <version>` and return 412 when it is stale, so two console tabs cannot silently overwrite each other.
+- Lists take `cursor` and `limit` (default 50, max 500) and return `{"items": [...], "next_cursor": "..."}`. `next_cursor` is absent on the last page. Cursors are opaque base64 of the sort key and id, so new rows never shift a page.
+- Errors are `{"error": {"code": "not_found", "message": "...", "field": "..."}}`, with codes `invalid`, `not_found`, `conflict`, `managed_by_file`, `version_conflict`, `forbidden`, `unauthorized`. A validation error names the `field`, so a console can show the message next to it.
+- Every resource has an integer `version`. `PATCH` and `DELETE` take it in `If-Match`, and a stale one gets 409 `version_conflict`, so two console tabs cannot silently overwrite each other.
+- Resources defined in the YAML file carry `managed_by_file: true` and are read-only through the API.
 - `PATCH` uses JSON merge patch (RFC 7396).
 - Every write is validated with the same code the file loader uses, then committed with a revision bump. Running instances pick it up within 2 seconds.
 - Admin writes are audited too, as events with `kind: admin`, the route, the resource name and the caller. Secret values are never included.
@@ -381,16 +386,17 @@ JSON under `/admin/v1/`, described by `api/openapi.yaml` (OpenAPI 3.0.3). The fi
 - `command`, `args`, `env` and `dir`. One process per backend, shared by every caller.
 - stderr goes to the airlock log, tagged with the backend name. The last 100 lines are kept and shown in `GET /servers/{name}` so a console can show why a server fails to start.
 - If the process exits, it restarts with exponential backoff (1s up to 60s).
-- The caller's identity is not passed to the process. Per-user processes are an open choice below.
+- The caller's identity is not passed to the process. Per-user processes are listed under Later.
 
 ### Streamable HTTP (`backend/streamable`)
 
 - `url`, plus `auth.mode`:
-  - `forward`: sends the caller's own bearer token, as the contract requires. Upstream sessions are pooled per (subject, token hash), so a backend never sees two users on one session. Idle sessions close after `session_idle_timeout` (default 10m), and the pool has a `max_sessions` cap (default 256) with least-recently-used eviction.
+  - `forward`: sends the caller's own bearer token. This is for components inside the mothership stack, which accept the same audience as airlock. It is opt-in per backend and never the default, because the MCP authorization spec warns against passing tokens through to third-party servers. Upstream sessions are pooled per (subject, token hash), so a backend never sees two users on one session. Idle sessions close after `session_idle_timeout` (default 10m), and the pool has a `max_sessions` cap (default 256) with least-recently-used eviction.
   - `static`: sends fixed `headers`. One shared session.
-  - `none`: no credentials. One shared session.
+  - `none`: no credentials. One shared session. This is the default.
 - `discovery_headers` are used for the session that lists tools at startup and on `list_changed`, since there is no caller at that point. For `logbook`, this is an API key that airlock holds.
 - `traceparent`, `tracestate` and `X-Request-ID` are forwarded on every call.
+- `X-Project` is set from the caller's project binding when there is one. Without a binding, a value the client sent passes through. logbook uses it to scope memories, and audit records carry it as `project`.
 
 ### Shared backend behavior
 
@@ -582,11 +588,11 @@ The repository root carries the shared files from `mothership/contributing/`: CO
 6. Tools only in v1. No prompts, resources, sampling, elicitation or roots passthrough.
 7. Deny wins, default is deny, rule order does not matter.
 8. Hidden and missing tools look the same to the caller.
-9. Two admin roles, `viewer` and `admin`, bound to subject patterns. Tool permissions never grant admin access.
+9. Three roles shared across the set, `member`, `viewer` and `admin`, bound to subject patterns. `*` is bound to `member` on first start. Tool permissions never grant admin access.
 10. A bootstrap admin key is printed once on first start when no role bindings exist.
 11. API keys use the `alk_` prefix and are stored as SHA-256 hashes.
 12. Secret fields are `${VAR}` references or AES-GCM encrypted literals, and are never returned by the API.
-13. HTTP backends in `forward` mode get one upstream session per caller and token.
+13. Token forwarding is opt-in per HTTP backend (`auth.mode: forward`) and meant for stack components. Those backends get one upstream session per caller and token. The default is `none`.
 14. stdio backends run one shared process per backend.
 15. Down backends keep their last known tools listed and fail calls fast.
 16. Rate limit and availability errors are tool results with `isError`, not JSON-RPC errors.
@@ -597,14 +603,17 @@ The repository root carries the shared files from `mothership/contributing/`: CO
 21. Module `github.com/raven-clown/airlock`, Apache-2.0, `go 1.26` in go.mod, first release v0.1.0.
 22. No paid edition. Every feature, including SSO, roles, audit, multi-tenancy, clustering and the admin API, ships in the Apache-2.0 build.
 
-## Open choices
+23. Every table has `org_id`, `default` for now, and every query filters by it.
+24. `X-Project` is set per caller through project bindings, or passed through from the client.
+25. Admins may add stdio servers through the API. `stdio.allowed_commands` in the file limits what can run, and the docs say the `admin` role is as strong as a shell on the host.
 
-1. **Token forwarding and the MCP spec.** The contract says a component forwards the caller's token unchanged. The MCP authorization spec warns against token passthrough, because a token meant for airlock then works at the backend too. For the mothership set this is fine if `logbook` accepts the same audience as airlock. For third-party HTTP backends, `forward` should not be the default. A later `exchange` mode (RFC 8693) would fix this properly. This may need a line in the contract.
-2. **Env override nesting.** The contract shows `AIRLOCK_LISTEN_ADDR` but does not say how nested keys work. This spec uses `__`. The other three projects should agree on the same rule, so it may belong in the contract.
-3. **stdio servers from the API.** Letting admins add stdio servers is what makes "add a server in a few clicks" work, but it means admin equals shell on the host. The current plan allows it, with `stdio.allowed_commands` in the file as the brake. The other option is to allow it only when the file turns it on.
-4. **Multi-tenancy.** The contract lists it among features that stay free. v1 has one tenant per instance. Adding a `tenant_id` column to every table now costs little and avoids a painful migration later, but it adds a concept nobody uses yet. Leaning towards adding the column with a single default tenant.
-5. **Per-user stdio processes.** Some stdio servers act as one account. A `per_user: true` option could start one process per caller with that caller's identity in its env. It costs a process per user, so it is left out of v1.
-6. **Prompts and resources.** Prompts can use the same prefix scheme. Resources need URI rewriting and are harder. Planned for v0.2.
-7. **Sampling and elicitation passthrough.** Needs routing a backend's request back to the right client session. Worth doing once a real backend needs it.
-8. **Rate limit errors.** Tool results with `isError` are friendlier to models. Some clients may prefer a JSON-RPC error they can retry on. Easy to change before v1.0.
-9. **Shared MCP sessions across replicas.** v1 needs sticky sessions. Storing session state in Postgres would remove that, at the cost of a store read on every request.
+## Later
+
+Settled for v1 by leaving them out, and planned after it:
+
+1. **Token exchange (RFC 8693)** as an `exchange` mode for HTTP backends, so third-party servers get a token meant for them.
+2. **Prompts and resources.** Prompts can use the same prefix scheme. Resources need URI rewriting. Planned for v0.2.
+3. **Per-user stdio processes.** A `per_user: true` option that starts one process per caller with the caller's identity in its env.
+4. **Sampling and elicitation passthrough.** Routing a backend's request back to the right client session, once a real backend needs it.
+5. **Shared MCP sessions across replicas.** Session state in Postgres, so replicas no longer need sticky sessions.
+6. **Organisations.** The `org_id` column is already there. Turning it on adds org-scoped roles and an org claim mapping.
