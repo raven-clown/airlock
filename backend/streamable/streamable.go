@@ -226,7 +226,7 @@ func (b *Backend) runOnce() error {
 	}
 	// Servers on the 2026-07-28 protocol only send list_changed on a listen stream.
 	// Older servers fail here, and the periodic check picks up their changes.
-	if stop, err := cli.ListenAsync(b.ctx, mcp.SubscriptionFilter{ToolsListChanged: true}, nil); err == nil {
+	if stop, err := cli.ListenAsync(b.ctx, mcp.SubscriptionFilter{ToolsListChanged: true}, func(error) { b.markBroken() }); err == nil {
 		defer stop()
 	}
 	b.mu.Lock()
