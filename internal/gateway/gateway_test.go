@@ -471,7 +471,6 @@ func TestClosedSessionCannotBeReclaimed(t *testing.T) {
 	eng := h.connect(t, engKey, client.WithLegacyProtocolOnly())
 	sid := eng.GetSessionId()
 	_ = eng.Close()
-	waitFor(t, "session unbound", func() bool { return h.gw.sessions.len() == 0 })
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, h.url, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+internsKey)
@@ -483,5 +482,55 @@ func TestClosedSessionCannotBeReclaimed(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func rawRequest(t *testing.T, method, url, key, sid string) int {
+	t.Helper()
+	var body io.Reader
+	if method == http.MethodPost {
+		body = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	}
+	req, _ := http.NewRequestWithContext(context.Background(), method, url, body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	req.Header.Set("Mcp-Session-Id", sid)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestUnauthenticatedDeleteRefused(t *testing.T) {
+	h := newHarness(t)
+	//nolint:staticcheck // legacy clients still open sessions
+	eng := h.connect(t, engKey, client.WithLegacyProtocolOnly())
+	sid := eng.GetSessionId()
+	if code := rawRequest(t, http.MethodDelete, h.url, "", sid); code != http.StatusUnauthorized {
+		t.Fatalf("DELETE without credentials = %d, want 401", code)
+	}
+	if code := rawRequest(t, http.MethodDelete, h.url, internsKey, sid); code != http.StatusForbidden {
+		t.Fatalf("DELETE by another caller = %d, want 403", code)
+	}
+	if names := listNames(t, eng); !slices.Contains(names, "alpha__echo") {
+		t.Error("session ended by someone who does not own it")
+	}
+}
+
+func TestOwnerDeleteUnbinds(t *testing.T) {
+	h := newHarness(t)
+	//nolint:staticcheck // legacy clients still open sessions
+	eng := h.connect(t, engKey, client.WithLegacyProtocolOnly())
+	sid := eng.GetSessionId()
+	if code := rawRequest(t, http.MethodDelete, h.url, engKey, sid); code >= 300 {
+		t.Fatalf("owner DELETE = %d", code)
+	}
+	if h.gw.sessions.known(sid) {
+		t.Error("session still bound after its owner ended it")
 	}
 }

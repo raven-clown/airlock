@@ -6,15 +6,21 @@ import (
 	"sync"
 )
 
-const maxSessions = 10000
+const (
+	maxSessions           = 10000
+	maxSessionsPerSubject = 100
+)
 
 // sessions remembers which subject each MCP session was minted for, so a
 // leaked session ID cannot be used with someone else's login. Unknown IDs are
 // refused: entries only come from session IDs airlock itself handed out.
+// Each subject keeps at most maxSessionsPerSubject, losing its own oldest
+// first, and once the table is full new sessions are left unbound, so they
+// fail closed instead of pushing out someone else's.
 type sessions struct {
-	mu     sync.Mutex
-	owners map[string]*list.Element
-	order  *list.List
+	mu        sync.Mutex
+	owners    map[string]*list.Element
+	bySubject map[string]*list.List
 }
 
 type sessionOwner struct {
@@ -22,7 +28,7 @@ type sessionOwner struct {
 }
 
 func newSessions() *sessions {
-	return &sessions{owners: map[string]*list.Element{}, order: list.New()}
+	return &sessions{owners: map[string]*list.Element{}, bySubject: map[string]*list.List{}}
 }
 
 func (s *sessions) bind(id, subject string) {
@@ -34,21 +40,35 @@ func (s *sessions) bind(id, subject string) {
 	if _, ok := s.owners[id]; ok {
 		return
 	}
-	s.owners[id] = s.order.PushBack(sessionOwner{id: id, subject: subject})
-	for s.order.Len() > maxSessions {
-		oldest := s.order.Front()
-		s.order.Remove(oldest)
-		delete(s.owners, oldest.Value.(sessionOwner).id)
+	if own := s.bySubject[subject]; own != nil && own.Len() >= maxSessionsPerSubject {
+		s.removeLocked(own.Front())
+	} else if len(s.owners) >= maxSessions {
+		return
 	}
+	own := s.bySubject[subject]
+	if own == nil {
+		own = list.New()
+		s.bySubject[subject] = own
+	}
+	s.owners[id] = own.PushBack(sessionOwner{id: id, subject: subject})
 }
 
 func (s *sessions) unbind(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if el, ok := s.owners[id]; ok {
-		s.order.Remove(el)
-		delete(s.owners, id)
+		s.removeLocked(el)
 	}
+}
+
+func (s *sessions) removeLocked(el *list.Element) {
+	o := el.Value.(sessionOwner)
+	own := s.bySubject[o.subject]
+	own.Remove(el)
+	if own.Len() == 0 {
+		delete(s.bySubject, o.subject)
+	}
+	delete(s.owners, o.id)
 }
 
 // allow reports whether subject owns session id.

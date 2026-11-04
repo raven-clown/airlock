@@ -90,9 +90,6 @@ func (g *Gateway) HTTPHandler() http.Handler {
 			r.Header.Set("X-Request-Id", newRequestID())
 		}
 		w.Header().Set("X-Request-Id", r.Header.Get("X-Request-Id"))
-		if g.endSession(w, r) {
-			return
-		}
 		id, err := g.opts.Runtime.Current().Authenticator.Authenticate(r.Context(), r)
 		if err != nil {
 			g.log.Info("authentication failed", "error", err, "request_id", r.Header.Get("X-Request-Id"))
@@ -116,19 +113,6 @@ func (g *Gateway) HTTPHandler() http.Handler {
 			g.sessions.unbind(sid)
 		}
 	})
-}
-
-// endSession handles a DELETE that carries a known session ID but no credentials.
-// mcp-go clients send their closing DELETE without custom headers, and holding
-// the session ID is all ending a session needs.
-func (g *Gateway) endSession(w http.ResponseWriter, r *http.Request) bool {
-	sid := r.Header.Get("Mcp-Session-Id")
-	if r.Method != http.MethodDelete || sid == "" || r.Header.Get("Authorization") != "" || !g.sessions.known(sid) {
-		return false
-	}
-	g.streamable.ServeHTTP(w, r)
-	g.sessions.unbind(sid)
-	return true
 }
 
 // ServeStdio serves one client over in and out as id, until ctx ends or in closes.
