@@ -1,0 +1,39 @@
+name: Feature
+description: Propose something new. We agree on the API here before anyone writes code.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What problem does this solve, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: api
+    attributes:
+      label: Proposed API
+      description: The config keys, endpoints, Go types or functions you have in mind.
+      render: go
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Behavior
+      description: What happens in the normal case, on errors and at the edges.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests
+      description: The cases a pull request for this should cover.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility
+      description: Does anything existing change?
+      placeholder: New feature only.
