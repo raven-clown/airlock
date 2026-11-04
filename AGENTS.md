@@ -36,7 +36,7 @@ Only `cmd/airlock` exists so far, with `version` and `help`. The rest is the pla
 - `internal/httpx`: listener, health, readiness and metrics routes
 - `internal/testutil`: test fakes and the test MCP server
 - `api/openapi.yaml`: the admin API description, source of truth for its handlers
-- `docs/`: design and milestone issues
+- `docs/`: design, milestone issues, and implementation plans in `docs/plans/`
 
 ## Rules
 
