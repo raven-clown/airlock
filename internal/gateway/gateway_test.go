@@ -442,3 +442,46 @@ func TestStdioDownstream(t *testing.T) {
 		t.Errorf("stdio caller sees %v", names)
 	}
 }
+
+func TestUnknownSessionRejected(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 2; i++ {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, h.url, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set("Authorization", "Bearer "+engKey)
+		req.Header.Set("Mcp-Session-Id", "mcp-session-made-up")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("attempt %d: status = %d, want 403", i, resp.StatusCode)
+		}
+	}
+	if n := h.gw.sessions.len(); n != 0 {
+		t.Errorf("%d sessions recorded from a client-supplied header", n)
+	}
+}
+
+func TestClosedSessionCannotBeReclaimed(t *testing.T) {
+	h := newHarness(t)
+	//nolint:staticcheck // legacy clients still open sessions
+	eng := h.connect(t, engKey, client.WithLegacyProtocolOnly())
+	sid := eng.GetSessionId()
+	_ = eng.Close()
+	waitFor(t, "session unbound", func() bool { return h.gw.sessions.len() == 0 })
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, h.url, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+internsKey)
+	req.Header.Set("Mcp-Session-Id", sid)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
