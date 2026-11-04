@@ -21,7 +21,7 @@ On Windows without a C compiler, run `go test ./...` locally. CI runs `-race` on
 
 ## Layout
 
-No code yet. The planned layout, from `docs/design.md`:
+Only `cmd/airlock` exists so far, with `version` and `help`. The rest is the planned layout from `docs/design.md`:
 
 - `cmd/airlock`: the CLI (`serve`, `validate`, `migrate`, `check`, `tools`, `keys new`, `bootstrap-key`, `version`)
 - `auth`, `policy`, `backend`, `audit`, `ratelimit`: public plugin interfaces and registries, with built-ins in subpackages

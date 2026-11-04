@@ -1,0 +1,8 @@
+cover.out
+/airlock
+/airlock.exe
+/dist/
+*.db
+*.db-wal
+*.db-shm
+airlock.key
