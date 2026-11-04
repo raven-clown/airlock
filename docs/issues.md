@@ -2,6 +2,8 @@
 
 The first release, as described in [design.md](design.md). Each issue below is posted to GitHub under the `v0.1.0` milestone. The `good first issue` items are small standalone packages that the core will import, so they can be built before the rest exists. If one is still unclaimed when the core needs it, a maintainer picks it up.
 
+Posted on 2026-11-04 as [#1 to #28](https://github.com/raven-clown/airlock/milestone/1), in the order below. GitHub is now the place to discuss them.
+
 ---
 
 ### Glob matching for tool patterns
