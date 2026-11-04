@@ -50,11 +50,12 @@ func (s *Set) Apply(ctx context.Context, cfgs []Config) error {
 	}
 	changed := false
 	var errs []error
+	var stale []Backend
 
 	s.mu.Lock()
 	for name, b := range s.backends {
 		if c, ok := want[name]; !ok || !reflect.DeepEqual(c, s.configs[name]) {
-			errs = append(errs, b.Close())
+			stale = append(stale, b)
 			delete(s.backends, name)
 			delete(s.configs, name)
 			changed = true
@@ -84,6 +85,11 @@ func (s *Set) Apply(ctx context.Context, cfgs []Config) error {
 	}
 	s.mu.Unlock()
 
+	// Closing waits for the backend's goroutines, which may report tool changes
+	// that call back into the set, so it happens outside the lock.
+	for _, b := range stale {
+		errs = append(errs, b.Close())
+	}
 	if changed {
 		s.fire()
 	}
@@ -113,12 +119,16 @@ func (s *Set) All() []Backend {
 // Close stops every backend.
 func (s *Set) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	var errs []error
+	all := make([]Backend, 0, len(s.backends))
 	for name, b := range s.backends {
-		errs = append(errs, b.Close())
+		all = append(all, b)
 		delete(s.backends, name)
 		delete(s.configs, name)
+	}
+	s.mu.Unlock()
+	var errs []error
+	for _, b := range all {
+		errs = append(errs, b.Close())
 	}
 	return errors.Join(errs...)
 }

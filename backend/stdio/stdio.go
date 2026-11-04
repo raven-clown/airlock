@@ -171,7 +171,7 @@ func (b *Backend) supervise() {
 
 // runOnce starts the process, serves until it exits, and reports whether it connected.
 func (b *Backend) runOnce() (bool, error) {
-	env := os.Environ()
+	env := inheritedEnv()
 	for k, v := range b.cfg.Env {
 		val, err := config.Expand(v, b.deps.Env)
 		if err != nil {
@@ -246,6 +246,19 @@ func (b *Backend) runOnce() (bool, error) {
 	_ = outR.Close()
 	<-stderrDone
 	return connected, err
+}
+
+// inheritedEnv is airlock's environment without its own AIRLOCK_ settings,
+// which can hold secrets no MCP server should see. A server that needs one
+// gets it through its env config.
+func inheritedEnv() []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(kv), "AIRLOCK_") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 func (b *Backend) connect(cli *client.Client) error {

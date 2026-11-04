@@ -239,3 +239,19 @@ func TestRegistered(t *testing.T) {
 	b, _ := s.Get("x")
 	waitFor(t, "registered backend up", func() bool { return b.Status().Up() })
 }
+
+func TestStdioDoesNotLeakAirlockEnv(t *testing.T) {
+	t.Setenv("AIRLOCK_SECRET_KEY", "do-not-leak")
+	t.Setenv("AIRLOCK_TEST_PLAIN", "kept-out-too")
+	b := start(t, backend.Config{Env: map[string]string{"AIRLOCK_EXPLICIT": "given"}}, nil)
+	waitUp(t, b)
+	for name, want := range map[string]string{"AIRLOCK_SECRET_KEY": "", "AIRLOCK_TEST_PLAIN": "", "AIRLOCK_EXPLICIT": "given"} {
+		res, err := callTool(context.Background(), b, "env", map[string]any{"name": name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := text(res); got != want {
+			t.Errorf("%s = %q in the child, want %q", name, got, want)
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -197,5 +198,35 @@ func TestListAllToolsLimits(t *testing.T) {
 				t.Fatalf("error = %v, want it to contain %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+type callbackOnClose struct{ fakeBackend }
+
+func (c *callbackOnClose) Close() error {
+	for _, fn := range c.onTools {
+		fn()
+	}
+	return nil
+}
+
+func TestApplyCloseCallbackNoDeadlock(t *testing.T) {
+	Register("callback-on-close", func(cfg Config, _ Deps) (Backend, error) {
+		return &callbackOnClose{fakeBackend{cfg: cfg}}, nil
+	})
+	s := NewSet(Deps{})
+	s.OnChange(func() { _ = s.All() })
+	if err := s.Apply(context.Background(), []Config{{Name: "a", Transport: "callback-on-close"}}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Apply(context.Background(), nil) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Apply deadlocked while a closing backend reported a tool change")
 	}
 }
