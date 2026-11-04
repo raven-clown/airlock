@@ -177,7 +177,7 @@ func (g *Gateway) handler(serverName, tool string) server.ToolHandlerFunc {
 		upstream.Params.Name = tool
 		res, err := b.Call(ctx, id, upstream)
 		switch {
-		case errors.Is(err, context.Canceled):
+		case err != nil && ctx.Err() != nil:
 			e.Outcome = audit.OutcomeCanceled
 			return nil, err
 		case errors.Is(err, context.DeadlineExceeded):
