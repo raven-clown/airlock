@@ -234,7 +234,9 @@ func (b *Backend) runOnce() (bool, error) {
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
-		<-exited
+		if werr := <-exited; werr != nil {
+			b.log.Debug("process stopped after a failed connect", "error", werr)
+		}
 	}
 
 	b.mu.Lock()
