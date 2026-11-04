@@ -88,19 +88,36 @@ type ToolLister interface {
 	ListTools(ctx context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error)
 }
 
+// Limits on one backend's tool list, so a broken or hostile server cannot page forever.
+const (
+	MaxToolPages = 100
+	MaxTools     = 10000
+)
+
 // ListAllTools follows pagination until every tool is listed.
 func ListAllTools(ctx context.Context, c ToolLister) ([]mcp.Tool, error) {
 	var tools []mcp.Tool
 	var req mcp.ListToolsRequest
-	for {
+	seen := map[mcp.Cursor]bool{}
+	for page := 1; ; page++ {
+		if page > MaxToolPages {
+			return nil, fmt.Errorf("listing tools: more than %d pages", MaxToolPages)
+		}
 		res, err := c.ListTools(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("listing tools: %w", err)
 		}
 		tools = append(tools, res.Tools...)
+		if len(tools) > MaxTools {
+			return nil, fmt.Errorf("listing tools: more than %d tools", MaxTools)
+		}
 		if res.NextCursor == "" {
 			return tools, nil
 		}
+		if seen[res.NextCursor] {
+			return nil, fmt.Errorf("listing tools: repeated cursor %q", res.NextCursor)
+		}
+		seen[res.NextCursor] = true
 		req.Params.Cursor = res.NextCursor
 	}
 }

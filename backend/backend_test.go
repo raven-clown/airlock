@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -155,5 +156,46 @@ func TestListAllTools(t *testing.T) {
 func TestStatusUp(t *testing.T) {
 	if (Status{State: StateUp}).Up() != true || (Status{State: StateDown}).Up() {
 		t.Error("Up is wrong")
+	}
+}
+
+type loopPager struct{ calls int }
+
+func (p *loopPager) ListTools(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+	p.calls++
+	return &mcp.ListToolsResult{Tools: []mcp.Tool{mcp.NewTool("t")}, PaginatedResult: mcp.PaginatedResult{NextCursor: "same"}}, nil
+}
+
+type endlessPager struct{ calls int }
+
+func (p *endlessPager) ListTools(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+	p.calls++
+	return &mcp.ListToolsResult{PaginatedResult: mcp.PaginatedResult{NextCursor: mcp.Cursor(strings.Repeat("x", p.calls))}}, nil
+}
+
+type hugePager struct{}
+
+func (hugePager) ListTools(_ context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+	tools := make([]mcp.Tool, 3000)
+	return &mcp.ListToolsResult{Tools: tools, PaginatedResult: mcp.PaginatedResult{NextCursor: mcp.Cursor(string(req.Params.Cursor) + "x")}}, nil
+}
+
+func TestListAllToolsLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		lister  ToolLister
+		wantErr string
+	}{
+		{"repeated cursor", &loopPager{}, "repeated cursor"},
+		{"too many pages", &endlessPager{}, "more than 100 pages"},
+		{"too many tools", hugePager{}, "more than 10000 tools"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ListAllTools(context.Background(), tt.lister)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
 	}
 }
