@@ -106,18 +106,23 @@ func TestAddTool(t *testing.T) {
 func TestWaitCanceled(t *testing.T) {
 	c := connect(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
+	type outcome struct {
+		res *mcp.CallToolResult
+		err error
+	}
+	done := make(chan outcome, 1)
 	go func() {
 		req := mcp.CallToolRequest{}
 		req.Params.Name = "wait"
-		_, err := c.CallTool(ctx, req)
-		done <- err
+		res, err := c.CallTool(ctx, req)
+		done <- outcome{res, err}
 	}()
 	cancel()
 	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("canceled call returned no error")
+	case o := <-done:
+		// In process, a cancel can reach the handler first, which then returns its own result.
+		if o.err == nil && text(o.res) != "canceled" {
+			t.Fatalf("canceled call returned %+v", o.res)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("wait did not return after cancel")
