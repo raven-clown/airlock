@@ -97,7 +97,7 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
 		return 1
 	}
-	mcp := httpx.CheckOrigin(func() []string { return holder.Current().AllowedOrigins }, gw.HTTPHandler())
+	mcp := httpx.CheckOrigin(func() []string { return holder.Current().Settings.AllowedOrigins }, gw.HTTPHandler())
 	srv := &http.Server{Handler: httpx.NewMux(mcp, ready(holder, set)), ReadHeaderTimeout: 10 * time.Second}
 	log.Info("listening", "addr", ln.Addr().String(), "version", version)
 	errc := make(chan error, 1)

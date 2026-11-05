@@ -18,13 +18,16 @@ import (
 
 // Snapshot is everything a request needs, built once per config version.
 type Snapshot struct {
-	Policy         policy.Policy
-	Authenticator  *auth.Chain
-	Servers        []backend.Config
-	AllowedOrigins []string
-	Audit          config.Audit
-	Stdio          config.StdioConfig
-	ListenAddr     string
+	Policy        policy.Policy
+	Authenticator *auth.Chain
+	Servers       []backend.Config
+	Settings      config.Settings
+	RoleBindings  []config.RoleBinding
+	Audit         config.Audit
+	Stdio         config.StdioConfig
+	ListenAddr    string
+	// Revision is the store revision the snapshot was built from.
+	Revision int64
 }
 
 // Source produces snapshots. Version changes whenever Load would return something new.
@@ -40,13 +43,14 @@ func Build(cfg *config.Config) (*Snapshot, error) {
 		return nil, fmt.Errorf("building policy: %w", err)
 	}
 	return &Snapshot{
-		Policy:         p,
-		Authenticator:  auth.NewChain(apikey.New(cfg.APIKeys, time.Now)),
-		Servers:        cfg.Servers,
-		AllowedOrigins: cfg.Settings.AllowedOrigins,
-		Audit:          cfg.Audit,
-		Stdio:          cfg.Stdio,
-		ListenAddr:     cfg.ListenAddr,
+		Policy:        p,
+		Authenticator: auth.NewChain(apikey.New(cfg.APIKeys, time.Now)),
+		Servers:       cfg.Servers,
+		Settings:      cfg.Settings,
+		RoleBindings:  cfg.RoleBindings,
+		Audit:         cfg.Audit,
+		Stdio:         cfg.Stdio,
+		ListenAddr:    cfg.ListenAddr,
 	}, nil
 }
 
