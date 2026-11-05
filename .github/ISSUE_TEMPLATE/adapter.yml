@@ -1,0 +1,63 @@
+name: New adapter
+description: Connect airlock to a new system through one of its plugin interfaces.
+labels: [adapter, enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Adapters are self-contained, so they're the easiest way to add something big to airlock.
+
+        **How to write it**
+        - Title: "Add <name> <kind>", such as "Add Audit sink that sends records to OpenSearch".
+        - Link the docs of the system you want to connect to.
+        - Say how it can be tested without network, such as a fake server or recorded responses.
+        - Plugins implement the interface in the package named above and register by name, with built-ins in subpackages such as `backend/stdio` or `audit` sinks. Point to the interface and the built-in you'd copy from.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of adapter
+      options:
+        - "Auth method (`auth`)"
+        - "Policy engine (`policy`)"
+        - "Backend transport (`backend`)"
+        - "Audit sink (`audit`)"
+        - "Rate limiter (`ratelimit`)"
+    validations:
+      required: true
+  - type: input
+    id: target
+    attributes:
+      label: What it connects to
+      description: The product or protocol, its version and a link to its docs.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: Who would use it, and what they do today without it.
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Config sketch
+      description: How a user would turn it on.
+      render: yaml
+  - type: textarea
+    id: testing
+    attributes:
+      label: How to test it without network
+      description: A fake server, recorded responses or an embedded mode.
+    validations:
+      required: true
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: "Would you like to build it?"
+      options:
+        - "Yes"
+        - Yes, with some help
+        - "No"
+    validations:
+      required: true
