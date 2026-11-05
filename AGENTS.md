@@ -47,7 +47,11 @@ Built so far: `cmd/airlock` (`serve`, `migrate`, `version`, `help`), `internal/n
 ## Rules
 
 - Follow CONTRIBUTING.md: tests with every change, a failing test first for a bug fix, table-driven tests, no network in unit tests, no bare `time.Sleep`.
-- Commit after every change, with a Conventional Commits message, and push it.
+- Work on a branch off main named `feat/<topic>`, `fix/<topic>`, `ci/<topic>`, `docs/<topic>` or `deps/<topic>`. Never commit straight to main and never force-push it.
+- Commit after every change, with a Conventional Commits message, and push the branch.
+- When the work is done, open a PR with a Conventional Commits title and a plain English description. Wait for every required check to pass: the three test jobs, coverage, lint, analyze, dependency review and pr title. A macOS job cancelled while waiting for a runner gets `gh run rerun <id> --failed` and is not a failure. Never merge a red PR.
+- Merge your own green PR with `gh pr merge <n> --squash --delete-branch --admin`, then `git switch main && git pull && git branch -D <branch>`.
+- A bug or a missing feature in mcp-go gets a reproduction, an issue and a PR on mark3labs/mcp-go, after checking for existing ones. Work around it here with the issue link next to the workaround. Never point go.mod at a fork.
 - Never mention AI, assistants or code generation in code, comments, docs, commit messages, pull requests or issues.
 - Never add `Co-Authored-By`, `Generated with` or similar trailers.
 - No em-dashes. Keep comments short and about why.
