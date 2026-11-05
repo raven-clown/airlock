@@ -27,6 +27,33 @@ func TestParseDefaults(t *testing.T) {
 	if len(got.Audit.Sinks) != 1 || got.Audit.Sinks[0].Kind != "stdout" {
 		t.Errorf("default sinks = %+v", got.Audit.Sinks)
 	}
+	if got.Storage.Driver != "sqlite" || got.Storage.DSN != "file:airlock.db" {
+		t.Errorf("default storage = %+v", got.Storage)
+	}
+}
+
+func TestSettings(t *testing.T) {
+	got, err := Parse([]byte("settings:\n  allowed_origins: [\"http://localhost:*\"]\n"), envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Settings.AllowedOrigins, []string{"http://localhost:*"}) {
+		t.Errorf("settings = %+v", got.Settings)
+	}
+	if _, err := Parse([]byte("allowed_origins: [x]\n"), envOf(nil)); err == nil || !strings.Contains(err.Error(), "allowed_origins") {
+		t.Errorf("top-level allowed_origins: error = %v", err)
+	}
+}
+
+func TestRoleBindings(t *testing.T) {
+	got, err := Parse([]byte("role_bindings:\n  - {name: admins, subjects: [\"group:ops\"], role: admin}\n"), envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []RoleBinding{{Name: "admins", Subjects: []string{"group:ops"}, Role: RoleAdmin}}
+	if !reflect.DeepEqual(got.RoleBindings, want) {
+		t.Errorf("role bindings = %+v", got.RoleBindings)
+	}
 }
 
 func TestEnvOverride(t *testing.T) {
@@ -39,6 +66,7 @@ func TestEnvOverride(t *testing.T) {
 		{name: "top level", env: map[string]string{"AIRLOCK_LISTEN_ADDR": "0.0.0.0:9"}, check: func(c *Config) bool { return c.ListenAddr == "0.0.0.0:9" }},
 		{name: "nested", env: map[string]string{"AIRLOCK_STDIO__IDENTITY": "me"}, check: func(c *Config) bool { return c.Stdio.Identity == "me" }},
 		{name: "bool", env: map[string]string{"AIRLOCK_AUDIT__INCLUDE_ARGS": "true"}, check: func(c *Config) bool { return c.Audit.IncludeArgs }},
+		{name: "storage", env: map[string]string{"AIRLOCK_STORAGE__DSN": "file:x.db"}, check: func(c *Config) bool { return c.Storage.DSN == "file:x.db" && c.Storage.Driver == "sqlite" }},
 		{name: "int", env: map[string]string{"AIRLOCK_AUDIT__BUFFER_SIZE": "10"}, check: func(c *Config) bool { return c.Audit.BufferSize == 10 }},
 		{name: "other prefix ignored", env: map[string]string{"LISTEN_ADDR": "x", "AIRLOCKX": "y"}, check: func(c *Config) bool { return c.ListenAddr == "127.0.0.1:8080" }},
 		{name: "unknown", env: map[string]string{"AIRLOCK_NOPE": "1"}, wantErr: "AIRLOCK_NOPE: unknown key nope"},

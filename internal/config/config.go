@@ -20,13 +20,40 @@ import (
 
 // Config is the whole config file.
 type Config struct {
-	ListenAddr     string           `yaml:"listen_addr"`
-	AllowedOrigins []string         `yaml:"allowed_origins"`
-	Stdio          StdioConfig      `yaml:"stdio"`
-	APIKeys        []apikey.Key     `yaml:"api_keys"`
-	Servers        []backend.Config `yaml:"servers"`
-	Rules          []rules.Rule     `yaml:"rules"`
-	Audit          Audit            `yaml:"audit"`
+	ListenAddr   string           `yaml:"listen_addr"`
+	Storage      Storage          `yaml:"storage"`
+	Stdio        StdioConfig      `yaml:"stdio"`
+	Audit        Audit            `yaml:"audit"`
+	Settings     Settings         `yaml:"settings"`
+	APIKeys      []apikey.Key     `yaml:"api_keys"`
+	Servers      []backend.Config `yaml:"servers"`
+	Rules        []rules.Rule     `yaml:"rules"`
+	RoleBindings []RoleBinding    `yaml:"role_bindings"`
+}
+
+// Storage selects the database.
+type Storage struct {
+	Driver string `yaml:"driver"`
+	DSN    string `yaml:"dsn"`
+}
+
+// Settings are stored in the settings table, one row per top-level key.
+type Settings struct {
+	AllowedOrigins []string `json:"allowed_origins,omitempty" yaml:"allowed_origins"`
+}
+
+// Admin API roles.
+const (
+	RoleAdmin  = "admin"
+	RoleMember = "member"
+	RoleViewer = "viewer"
+)
+
+// RoleBinding gives an admin API role to the subjects matching its patterns.
+type RoleBinding struct {
+	Name     string   `json:"name" yaml:"name"`
+	Subjects []string `json:"subjects" yaml:"subjects"`
+	Role     string   `json:"role" yaml:"role"`
 }
 
 // StdioConfig holds settings for serve --stdio.
@@ -71,12 +98,13 @@ func OSEnv() Env {
 }
 
 // processKeys are expanded at load time. The rest are resources whose ${VAR} references are kept.
-var processKeys = map[string]bool{"listen_addr": true, "allowed_origins": true, "stdio": true, "audit": true}
+var processKeys = map[string]bool{"listen_addr": true, "storage": true, "stdio": true, "audit": true, "settings": true}
 
 // Default returns the config used when no file is given.
 func Default() *Config {
 	return &Config{
 		ListenAddr: "127.0.0.1:8080",
+		Storage:    Storage{Driver: "sqlite", DSN: "file:airlock.db"},
 		Stdio:      StdioConfig{Identity: "local"},
 		Audit: Audit{
 			Sinks:      []Sink{{Kind: "stdout"}},
@@ -237,6 +265,34 @@ func (c *Config) normalize() error {
 	}
 	if c.Audit.BufferSize <= 0 {
 		return errors.New("audit.buffer_size: must be positive")
+	}
+	if c.Storage.Driver != "sqlite" && c.Storage.Driver != "postgres" {
+		return errors.New("storage.driver: must be sqlite or postgres")
+	}
+	if c.Storage.DSN == "" {
+		return errors.New("storage.dsn: required")
+	}
+	return c.checkRoleBindings()
+}
+
+func (c *Config) checkRoleBindings() error {
+	seen := map[string]bool{}
+	for i, b := range c.RoleBindings {
+		at := fmt.Sprintf("role_bindings[%d]", i)
+		switch {
+		case b.Name == "":
+			return fmt.Errorf("%s.name: required", at)
+		case seen[b.Name]:
+			return fmt.Errorf("%s.name: duplicate %q", at, b.Name)
+		case len(b.Subjects) == 0:
+			return fmt.Errorf("%s.subjects: required", at)
+		}
+		switch b.Role {
+		case RoleAdmin, RoleMember, RoleViewer:
+		default:
+			return fmt.Errorf("%s.role: must be admin, member or viewer", at)
+		}
+		seen[b.Name] = true
 	}
 	return nil
 }

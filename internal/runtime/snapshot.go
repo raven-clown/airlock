@@ -43,7 +43,7 @@ func Build(cfg *config.Config) (*Snapshot, error) {
 		Policy:         p,
 		Authenticator:  auth.NewChain(apikey.New(cfg.APIKeys, time.Now)),
 		Servers:        cfg.Servers,
-		AllowedOrigins: cfg.AllowedOrigins,
+		AllowedOrigins: cfg.Settings.AllowedOrigins,
 		Audit:          cfg.Audit,
 		Stdio:          cfg.Stdio,
 		ListenAddr:     cfg.ListenAddr,
