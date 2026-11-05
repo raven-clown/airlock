@@ -5,10 +5,13 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/raven-clown/airlock/audit"
+	"github.com/raven-clown/airlock/backend"
+	"github.com/raven-clown/airlock/internal/runtime"
 	"github.com/raven-clown/airlock/internal/store"
 )
 
@@ -36,4 +39,21 @@ func TestRetention(t *testing.T) {
 	})
 	cancel()
 	<-done
+}
+
+func TestReadyHidesStoreErrors(t *testing.T) {
+	st, err := store.Open(context.Background(), "sqlite", "file:"+filepath.ToSlash(filepath.Join(t.TempDir(), "a.db")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Close()
+	var logs syncBuffer
+	check := ready(runtime.NewHolder(&runtime.Snapshot{}), backend.NewSet(backend.Deps{}), st, slog.New(slog.NewJSONHandler(&logs, nil)))
+	err = check()
+	if err == nil || err.Error() != "store unavailable" {
+		t.Errorf("ready error = %v, want store unavailable", err)
+	}
+	if !strings.Contains(logs.String(), "closed") {
+		t.Errorf("the store error is not logged: %s", logs.String())
+	}
 }

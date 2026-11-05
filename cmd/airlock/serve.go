@@ -128,7 +128,7 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 		return 1
 	}
 	mcp := httpx.CheckOrigin(func() []string { return holder.Current().Settings.AllowedOrigins }, gw.HTTPHandler())
-	srv := &http.Server{Handler: httpx.NewMux(mcp, ready(holder, set, st)), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: httpx.NewMux(mcp, ready(holder, set, st, log)), ReadHeaderTimeout: 10 * time.Second}
 	log.Info("listening", "addr", ln.Addr().String(), "version", version)
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
@@ -172,12 +172,15 @@ func buildSinks(cfg config.Audit, logOut io.Writer) ([]audit.Sink, error) {
 	return sinks, nil
 }
 
-func ready(holder *runtime.Holder, set *backend.Set, st *store.Store) func() error {
+// ready reports whether airlock can serve. /readyz shows the error to anyone, so a
+// store error, which can name the database host and user, only goes to the log.
+func ready(holder *runtime.Holder, set *backend.Set, st *store.Store, log *slog.Logger) func() error {
 	return func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := st.Ping(ctx); err != nil {
-			return fmt.Errorf("store: %w", err)
+			log.Error("store is not reachable", "error", err)
+			return errors.New("store unavailable")
 		}
 		for _, s := range holder.Current().Servers {
 			if !s.Required {
