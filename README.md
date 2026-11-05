@@ -1,8 +1,13 @@
 # airlock
 
+[![ci](https://github.com/raven-clown/airlock/actions/workflows/ci.yml/badge.svg)](https://github.com/raven-clown/airlock/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/raven-clown/airlock)](https://github.com/raven-clown/airlock/releases)
+[![Go Reference](https://pkg.go.dev/badge/github.com/raven-clown/airlock.svg)](https://pkg.go.dev/github.com/raven-clown/airlock)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 One MCP endpoint in front of all your MCP servers, with real logins, per-person permissions, an audit log and rate limits.
 
-> **Status: in development.** The design is done ([docs/design.md](docs/design.md)) and the code is being written. Nothing is released yet, so don't run it in production. Issues and pull requests are very welcome.
+> **Status: early, [v0.1.0](https://github.com/raven-clown/airlock/releases/tag/v0.1.0).** The gateway core works: one endpoint in front of stdio and Streamable HTTP servers, API key login, allow and deny rules, filtered tool lists, an audit log in SQL, and SQLite or Postgres. OIDC login, rate limits, the admin API and `airlock check` come next. Try it, but don't run it in production yet. Issues and pull requests are very welcome.
 
 ## Why
 
@@ -45,6 +50,17 @@ There is no paid edition and no license key. SSO, roles and permissions, audit l
 | Language | Go | Go | Rust | Go |
 
 "Not mentioned" means the project's README doesn't describe it. The details and sources are in [docs/design.md](docs/design.md#how-airlock-compares). In short: docker/mcp-gateway is great for one person's desktop and sells per-user control separately, MCPJungle registers servers but describes only simple access control, and agentgateway does far more (A2A, LLM routing, Kubernetes) at the cost of much more to learn. airlock does one job and stays small enough to read in an afternoon.
+
+## Install
+
+With Go 1.26 or later:
+
+```shell
+go install github.com/raven-clown/airlock/cmd/airlock@latest
+airlock version
+```
+
+Prebuilt binaries for Linux, macOS and Windows are planned.
 
 ## A taste
 
@@ -91,13 +107,18 @@ Resources in the file are written to the database at startup and whenever the fi
 
 ## Roadmap
 
-**v0.1.0, first release**
+**v0.1.0, released**
 - stdio and Streamable HTTP backends, prefixed tool names, filtered tool lists
-- OIDC and API key login, `member` / `viewer` / `admin` roles
-- allow and deny rules, `airlock check`
-- audit log in SQL, rate limits
-- admin API with OpenAPI, SQLite and Postgres
-- `/healthz`, `/readyz`, Prometheus metrics, OTLP traces
+- API key login, allow and deny rules on users, groups and keys
+- audit records for every call, in SQL and on stdout or a file, with retention
+- `airlock serve` over HTTP or `--stdio`, `/healthz`, `/readyz`, config reload
+- SQLite and Postgres with migrations, resources provisioned from the config file
+
+**Next**
+- OIDC login, `member` / `viewer` / `admin` roles
+- `airlock check`, rate limits
+- admin API with OpenAPI
+- Prometheus metrics, OTLP traces
 
 **After that**
 - prompts and resources through the gateway
@@ -121,6 +142,8 @@ airlock is one of four projects that work alone and fit together, described in t
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and how pull requests get merged.
 - Pick an issue labeled [`good first issue`](https://github.com/raven-clown/airlock/labels/good%20first%20issue). Each one says which files to change and which tests to add.
 - Bigger pieces are labeled [`adapter`](https://github.com/raven-clown/airlock/labels/adapter): a CEL or OPA policy, a Redis rate limiter, an OpenSearch or webhook audit sink. They sit behind small Go interfaces, so you can build one without touching the core.
+- Found a bug, or want something new? Open an issue with one of the [issue forms](https://github.com/raven-clown/airlock/issues/new/choose). Each one says what to include.
+- Pull requests come with a template that lists what reviewers check first in this project, so you know what to cover before you open one.
 - Found a security problem? See [SECURITY.md](SECURITY.md).
 
 ## License
