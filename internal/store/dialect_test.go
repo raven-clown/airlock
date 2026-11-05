@@ -21,3 +21,19 @@ func TestRebind(t *testing.T) {
 		})
 	}
 }
+
+func TestSQLitePath(t *testing.T) {
+	tests := []struct{ dsn, want string }{
+		{"file:airlock.db", "airlock.db"},
+		{"file:/var/lib/a.db?_pragma=x", "/var/lib/a.db"},
+		{"a.db", "a.db"},
+		{"file::memory:", ""},
+		{":memory:", ""},
+		{"file:x?mode=memory", ""},
+	}
+	for _, tt := range tests {
+		if got := sqlitePath(tt.dsn); got != tt.want {
+			t.Errorf("sqlitePath(%q) = %q, want %q", tt.dsn, got, tt.want)
+		}
+	}
+}

@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -38,6 +40,9 @@ func Open(ctx context.Context, driver, dsn string) (*Store, error) {
 	switch driver {
 	case "sqlite":
 		d = sqliteDialect
+		if err := createPrivate(sqlitePath(dsn)); err != nil {
+			return nil, err
+		}
 		dsn = sqliteDSN(dsn)
 	case "postgres":
 		d = postgresDialect
@@ -57,6 +62,31 @@ func Open(ctx context.Context, driver, dsn string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// sqlitePath returns the file a sqlite DSN names, or "" for an in-memory database.
+func sqlitePath(dsn string) string {
+	path, query, _ := strings.Cut(strings.TrimPrefix(dsn, "file:"), "?")
+	if path == "" || path == ":memory:" || strings.Contains(query, "mode=memory") {
+		return ""
+	}
+	return path
+}
+
+// createPrivate creates a new database file readable only by its owner, since rows
+// can hold secrets from the config file. SQLite gives its WAL files the same mode.
+func createPrivate(path string) error {
+	if path == "" {
+		return nil
+	}
+	f, err := os.OpenFile(filepath.Clean(path), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("creating the database file: %w", err)
+	}
+	return f.Close()
 }
 
 func sqliteDSN(dsn string) string {
