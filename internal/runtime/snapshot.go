@@ -93,13 +93,11 @@ func Watch(ctx context.Context, src Source, h *Holder, opts WatchOptions) {
 	}
 	ticker := time.NewTicker(opts.Every)
 	defer ticker.Stop()
-	hup := hangups()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-		case <-hup:
 		}
 		v, err := src.Version(ctx)
 		if err != nil {
