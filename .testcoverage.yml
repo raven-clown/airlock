@@ -1,3 +1,6 @@
 profile: cover.out
 threshold:
   total: 80
+exclude:
+  paths:
+    - internal/store/storetest

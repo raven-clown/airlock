@@ -105,8 +105,14 @@ func (s *Store) apply(ctx context.Context, conn *sql.Conn, m migration) error {
 		return fmt.Errorf("migration %d: %w", m.version, err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, m.sql); err != nil {
-		return fmt.Errorf("migration %d: %w", m.version, err)
+	// One statement per call, since not every driver runs several in one Exec.
+	for _, stmt := range strings.Split(m.sql, ";") {
+		if strings.TrimSpace(stmt) == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("migration %d: %w", m.version, err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, s.q("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)"), m.version, millis(s.now())); err != nil {
 		return fmt.Errorf("migration %d: %w", m.version, err)
