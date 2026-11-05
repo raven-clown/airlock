@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/raven-clown/airlock/audit"
@@ -21,7 +22,9 @@ import (
 	"github.com/raven-clown/airlock/internal/config"
 	"github.com/raven-clown/airlock/internal/gateway"
 	"github.com/raven-clown/airlock/internal/httpx"
+	"github.com/raven-clown/airlock/internal/provision"
 	"github.com/raven-clown/airlock/internal/runtime"
+	"github.com/raven-clown/airlock/internal/store"
 )
 
 const (
@@ -44,7 +47,22 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 	}
 	log := slog.New(slog.NewJSONHandler(logOut, nil))
 
-	src := runtime.NewFileSource(*path, env)
+	cfg, err := loadConfig(*path, env)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
+		return 1
+	}
+	st, err := store.Open(ctx, cfg.Storage.Driver, cfg.Storage.DSN)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
+		return 1
+	}
+	defer func() { _ = st.Close() }()
+	if _, err := provision.Apply(ctx, st, store.DefaultOrg, cfg); err != nil {
+		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
+		return 1
+	}
+	src := runtime.NewStoreSource(st, store.DefaultOrg, cfg)
 	snap, err := src.Load(ctx)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
@@ -57,6 +75,7 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
 		return 1
 	}
+	sinks = append([]audit.Sink{st.AuditSink(store.DefaultOrg)}, sinks...)
 	pipe := audit.NewPipeline(sinks, audit.PipelineOptions{BufferSize: snap.Audit.BufferSize, Block: snap.Audit.OnOverflow == "block", Logger: log})
 
 	set := backend.NewSet(backend.Deps{Logger: log, Env: env.Lookup})
@@ -66,20 +85,31 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 	instance, _ := os.Hostname()
 	gw := gateway.New(gateway.Options{Backends: set, Runtime: holder, Audit: pipe, Logger: log, Instance: instance, Version: version})
 
-	go runtime.Watch(ctx, src, holder, runtime.WatchOptions{
-		Every:  reloadEvery,
-		Logger: log,
-		OnSwap: func(s *runtime.Snapshot) {
-			if err := set.Apply(ctx, s.Servers); err != nil {
-				log.Error("applying backends", "error", err)
-			}
-		},
+	ctx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		provision.Watch(ctx, *path, env, st, store.DefaultOrg, provision.WatchOptions{Every: reloadEvery, Logger: log, Process: cfg})
 	})
+	wg.Go(func() {
+		runtime.Watch(ctx, src, holder, runtime.WatchOptions{
+			Every:  reloadEvery,
+			Logger: log,
+			OnSwap: func(s *runtime.Snapshot) {
+				if err := set.Apply(ctx, s.Servers); err != nil {
+					log.Error("applying backends", "error", err)
+				}
+			},
+		})
+	})
+	wg.Go(func() { runRetention(ctx, st, store.DefaultOrg, time.Hour, cfg.Audit.Retention, time.Now, log) })
 
+	// The store closes last, after the loops stop and the audit pipeline flushes into it.
 	defer func() {
+		cancel()
+		wg.Wait()
 		_ = set.Close()
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
-		defer cancel()
+		closeCtx, cancelClose := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		defer cancelClose()
 		_ = pipe.Close(closeCtx)
 	}()
 
@@ -98,7 +128,7 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 		return 1
 	}
 	mcp := httpx.CheckOrigin(func() []string { return holder.Current().Settings.AllowedOrigins }, gw.HTTPHandler())
-	srv := &http.Server{Handler: httpx.NewMux(mcp, ready(holder, set)), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: httpx.NewMux(mcp, ready(holder, set, st)), ReadHeaderTimeout: 10 * time.Second}
 	log.Info("listening", "addr", ln.Addr().String(), "version", version)
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
@@ -142,8 +172,13 @@ func buildSinks(cfg config.Audit, logOut io.Writer) ([]audit.Sink, error) {
 	return sinks, nil
 }
 
-func ready(holder *runtime.Holder, set *backend.Set) func() error {
+func ready(holder *runtime.Holder, set *backend.Set, st *store.Store) func() error {
 	return func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := st.Ping(ctx); err != nil {
+			return fmt.Errorf("store: %w", err)
+		}
 		for _, s := range holder.Current().Servers {
 			if !s.Required {
 				continue
@@ -155,4 +190,12 @@ func ready(holder *runtime.Holder, set *backend.Set) func() error {
 		}
 		return nil
 	}
+}
+
+// loadConfig reads path, or uses the defaults when path is empty.
+func loadConfig(path string, env config.Env) (*config.Config, error) {
+	if path == "" {
+		return config.Parse(nil, env)
+	}
+	return config.Load(path, env)
 }

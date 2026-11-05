@@ -250,11 +250,13 @@ Plugin config arrives as JSON, whether it came from YAML or from the API, so a p
 | `rate_limits` | Rate limit rules |
 | `api_keys` | Name, owner (empty for service keys), SHA-256 hash, groups, created, expires, last used, revoked |
 | `role_bindings` | Admin API roles: subject pattern and role |
-| `settings` | Key-value settings: OIDC, allowed origins, audit options |
+| `settings` | Key-value settings, one row per top-level key of `settings` in the file: OIDC, allowed origins, audit options |
 | `audit_events` | One row per tool call |
 | `revision` | One row per org, bumped on every write |
 
 | `project_bindings` | Subject pattern and the `X-Project` value to set for it |
+
+Every resource table has the same columns: `org_id`, `name`, `source`, `version`, `spec` (the resource as JSON), `created_at` and `updated_at`, so a new resource field needs no migration. Role bindings have a `name`, like rules.
 
 Every row in every table has `org_id`, `default` until organisations ship, and every query filters by it, as the contract requires. Multi-tenancy then needs no data migration. Every managed row also has `source` (`file` or `api`), `version` (an integer, for optimistic concurrency), `created_at` and `updated_at`.
 
@@ -467,7 +469,8 @@ settings:
     groups_claim: groups
 
 role_bindings:
-  - subjects: ["group:airlock-admins"]
+  - name: admins
+    subjects: ["group:airlock-admins"]
     role: admin
 
 servers:

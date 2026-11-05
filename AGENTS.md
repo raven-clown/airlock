@@ -21,9 +21,11 @@ Run it locally with `go run ./cmd/airlock serve --config airlock.yaml`, or `--st
 
 On Windows without a C compiler, run `go test ./...` locally. CI runs `-race` on Linux and macOS.
 
+The store suite also runs on Postgres: `AIRLOCK_TEST_POSTGRES_DSN=postgres://... go test -tags integration ./internal/store/...`. CI does this in the `postgres` job. Store changes go through `internal/store/storetest`, so both engines get the same tests.
+
 ## Layout
 
-Built so far: `cmd/airlock` (`serve`, `version`, `help`), `internal/naming`, `policy`, `policy/glob`, `policy/rules`, `auth`, `auth/apikey`, `backend`, `backend/stdio`, `backend/streamable`, `audit` (pipeline, stdout and file sinks), `internal/config`, `internal/httpx` (forwarded headers, mux, Origin check), `internal/runtime` (file source only), `internal/store` (SQLite), `internal/provision`, `internal/gateway` and `internal/testutil`. The rest is the planned layout from `docs/design.md`:
+Built so far: `cmd/airlock` (`serve`, `migrate`, `version`, `help`), `internal/naming`, `policy`, `policy/glob`, `policy/rules`, `auth`, `auth/apikey`, `backend`, `backend/stdio`, `backend/streamable`, `audit` (pipeline, stdout and file sinks), `internal/config`, `internal/httpx` (forwarded headers, mux, Origin check), `internal/runtime` (snapshots from the store), `internal/store` (SQLite and Postgres), `internal/provision`, `internal/gateway` and `internal/testutil`. The rest is the planned layout from `docs/design.md`:
 
 - `cmd/airlock`: the CLI (`serve`, `validate`, `migrate`, `check`, `tools`, `keys new`, `bootstrap-key`, `version`)
 - `auth`, `policy`, `backend`, `audit`, `ratelimit`: public plugin interfaces and registries, with built-ins in subpackages

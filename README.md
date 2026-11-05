@@ -79,6 +79,16 @@ rules:
     deny: ["github__delete_*"]
 ```
 
+State lives in SQL, in `airlock.db` in the working directory by default. For teams and replicas, point every instance at one Postgres database:
+
+```yaml
+storage:
+  driver: postgres
+  dsn: postgres://airlock:secret@db:5432/airlock
+```
+
+Resources in the file are written to the database at startup and whenever the file changes, and every instance picks up a change within two seconds. `airlock migrate` applies database migrations without starting the server.
+
 ## Roadmap
 
 **v0.1.0, first release**

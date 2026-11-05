@@ -148,6 +148,9 @@ func TestStoreSourceBadRow(t *testing.T) {
 	if h.Current() != before {
 		t.Error("snapshot replaced by a broken store")
 	}
+	if n := strings.Count(logs.String(), "config reload failed"); n != 1 {
+		t.Errorf("error logged %d times, want once", n)
+	}
 	select {
 	case <-swaps:
 		t.Error("OnSwap called for a broken store")
