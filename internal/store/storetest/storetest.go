@@ -31,6 +31,7 @@ func Run(t *testing.T, open func(t *testing.T) *store.Store) {
 		{"AllKinds", testAllKinds},
 	}
 	tests = append(tests, provisionTests...)
+	tests = append(tests, auditTests...)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { tt.fn(t, st, NewOrg(t)) })
 	}

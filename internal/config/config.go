@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -65,10 +66,11 @@ type StdioConfig struct {
 
 // Audit configures audit records.
 type Audit struct {
-	Sinks       []Sink `yaml:"sinks"`
-	IncludeArgs bool   `yaml:"include_args"`
-	BufferSize  int    `yaml:"buffer_size"`
-	OnOverflow  string `yaml:"on_overflow"`
+	Sinks       []Sink        `yaml:"sinks"`
+	IncludeArgs bool          `yaml:"include_args"`
+	BufferSize  int           `yaml:"buffer_size"`
+	OnOverflow  string        `yaml:"on_overflow"`
+	Retention   time.Duration `yaml:"retention"`
 }
 
 // Sink is one audit destination.
@@ -110,6 +112,7 @@ func Default() *Config {
 			Sinks:      []Sink{{Kind: "stdout"}},
 			BufferSize: 4096,
 			OnOverflow: "drop",
+			Retention:  720 * time.Hour,
 		},
 	}
 }
@@ -265,6 +268,9 @@ func (c *Config) normalize() error {
 	}
 	if c.Audit.BufferSize <= 0 {
 		return errors.New("audit.buffer_size: must be positive")
+	}
+	if c.Audit.Retention <= 0 {
+		return errors.New("audit.retention: must be positive")
 	}
 	if c.Storage.Driver != "sqlite" && c.Storage.Driver != "postgres" {
 		return errors.New("storage.driver: must be sqlite or postgres")

@@ -27,6 +27,9 @@ func TestParseDefaults(t *testing.T) {
 	if len(got.Audit.Sinks) != 1 || got.Audit.Sinks[0].Kind != "stdout" {
 		t.Errorf("default sinks = %+v", got.Audit.Sinks)
 	}
+	if got.Audit.Retention != 720*time.Hour {
+		t.Errorf("default retention = %v", got.Audit.Retention)
+	}
 	if got.Storage.Driver != "sqlite" || got.Storage.DSN != "file:airlock.db" {
 		t.Errorf("default storage = %+v", got.Storage)
 	}
@@ -208,6 +211,13 @@ func TestValidate(t *testing.T) {
 		{"key hash", "api_keys:\n  - {name: k, sha256: abc}\n", "api_keys[0].sha256: must be 64 hex characters"},
 		{"duplicate key", "api_keys:\n  - {name: k, sha256: " + hexA + "}\n  - {name: k, sha256: " + hexB + "}\n", `api_keys[1].name: duplicate "k"`},
 		{"rules", "rules:\n  - {name: r}\n", `rules: rule "r": no subjects`},
+		{"retention", "audit:\n  retention: 0s\n", "audit.retention: must be positive"},
+		{"driver", "storage:\n  driver: mysql\n", "storage.driver: must be sqlite or postgres"},
+		{"dsn", "storage:\n  dsn: \"\"\n", "storage.dsn: required"},
+		{"binding name", "role_bindings:\n  - {subjects: [\"*\"], role: member}\n", "role_bindings[0].name: required"},
+		{"binding duplicate", "role_bindings:\n  - {name: a, subjects: [\"*\"], role: member}\n  - {name: a, subjects: [\"*\"], role: viewer}\n", `role_bindings[1].name: duplicate "a"`},
+		{"binding role", "role_bindings:\n  - {name: a, subjects: [\"*\"], role: owner}\n", "role_bindings[0].role: must be admin, member or viewer"},
+		{"binding subjects", "role_bindings:\n  - {name: a, role: admin}\n", "role_bindings[0].subjects: required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
