@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-05
+
 ### Added
 
 - One MCP endpoint in front of stdio and Streamable HTTP servers, with tools prefixed as `<server>__<tool>`.
@@ -14,3 +16,6 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Resources in the config file are provisioned into the database, and every instance reloads within two seconds of any change.
 - Audit records always go to the `audit_events` table and are kept for `audit.retention` (30 days by default).
 - `role_bindings` and `settings` in the config file. `allowed_origins` moved to `settings.allowed_origins`.
+
+[Unreleased]: https://github.com/raven-clown/airlock/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/raven-clown/airlock/releases/tag/v0.1.0
