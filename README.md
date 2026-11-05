@@ -1,13 +1,27 @@
-# airlock
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/header-dark.svg">
+  <img src="docs/assets/header-light.svg" alt="airlock: MCP gateway. One front door for every MCP server." width="100%">
+</picture>
 
-[![ci](https://github.com/raven-clown/airlock/actions/workflows/ci.yml/badge.svg)](https://github.com/raven-clown/airlock/actions/workflows/ci.yml)
-[![release](https://img.shields.io/github/v/release/raven-clown/airlock)](https://github.com/raven-clown/airlock/releases)
-[![Go Reference](https://pkg.go.dev/badge/github.com/raven-clown/airlock.svg)](https://pkg.go.dev/github.com/raven-clown/airlock)
-[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+<div align="center">
+
+[![ci](https://img.shields.io/github/actions/workflow/status/raven-clown/airlock/ci.yml?branch=main&style=for-the-badge&label=ci&logo=githubactions&logoColor=white)](https://github.com/raven-clown/airlock/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/raven-clown/airlock?style=for-the-badge&color=6366F1)](https://github.com/raven-clown/airlock/releases)
+[![Go Reference](https://img.shields.io/badge/go-reference-6366F1?style=for-the-badge&logo=go&logoColor=white)](https://pkg.go.dev/github.com/raven-clown/airlock)
+[![license](https://img.shields.io/badge/license-Apache--2.0-6366F1?style=for-the-badge)](LICENSE)
+
+</div>
 
 One MCP endpoint in front of all your MCP servers, with real logins, per-person permissions, an audit log and rate limits.
 
 > **Status: early, [v0.1.0](https://github.com/raven-clown/airlock/releases/tag/v0.1.0).** The gateway core works: one endpoint in front of stdio and Streamable HTTP servers, API key login, allow and deny rules, filtered tool lists, an audit log in SQL, and SQLite or Postgres. OIDC login, rate limits, the admin API and `airlock check` come next. Try it, but don't run it in production yet. Issues and pull requests are very welcome.
+
+## How it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
+  <img src="docs/assets/how-it-works-light.svg" alt="Three clients call airlock. Calls that are allowed pass through to github, postgres and slack, a denied call gets 403, and every call is written to the audit log." width="100%">
+</picture>
 
 ## Why
 
