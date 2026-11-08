@@ -10,7 +10,6 @@
 [![Go Reference](https://img.shields.io/badge/go-reference-6366F1?style=for-the-badge&logo=go&logoColor=white)](https://pkg.go.dev/github.com/raven-clown/airlock)
 [![license](https://img.shields.io/badge/license-Apache--2.0-6366F1?style=for-the-badge)](LICENSE)
 [![openssf scorecard](https://img.shields.io/ossf-scorecard/github.com/raven-clown/airlock?style=for-the-badge&label=openssf%20scorecard)](https://scorecard.dev/viewer/?uri=github.com/raven-clown/airlock)
-[![go report card](https://goreportcard.com/badge/github.com/raven-clown/airlock?style=for-the-badge)](https://goreportcard.com/report/github.com/raven-clown/airlock)
 
 </div>
 
