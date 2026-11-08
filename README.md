@@ -9,6 +9,8 @@
 [![release](https://img.shields.io/github/v/release/raven-clown/airlock?style=for-the-badge&color=6366F1)](https://github.com/raven-clown/airlock/releases)
 [![Go Reference](https://img.shields.io/badge/go-reference-6366F1?style=for-the-badge&logo=go&logoColor=white)](https://pkg.go.dev/github.com/raven-clown/airlock)
 [![license](https://img.shields.io/badge/license-Apache--2.0-6366F1?style=for-the-badge)](LICENSE)
+[![openssf scorecard](https://img.shields.io/ossf-scorecard/github.com/raven-clown/airlock?style=for-the-badge&label=openssf%20scorecard)](https://scorecard.dev/viewer/?uri=github.com/raven-clown/airlock)
+[![go report card](https://goreportcard.com/badge/github.com/raven-clown/airlock?style=for-the-badge)](https://goreportcard.com/report/github.com/raven-clown/airlock)
 
 </div>
 
@@ -159,6 +161,12 @@ airlock is one of four projects that work alone and fit together, described in t
 - Found a bug, or want something new? Open an issue with one of the [issue forms](https://github.com/raven-clown/airlock/issues/new/choose). Each one says what to include.
 - Pull requests come with a template that lists what reviewers check first in this project, so you know what to cover before you open one.
 - Found a security problem? See [SECURITY.md](SECURITY.md).
+
+## Contributors
+
+Thanks to everyone who has helped build airlock.
+
+<a href="https://github.com/raven-clown/airlock/graphs/contributors"><img src="https://contrib.rocks/image?repo=raven-clown/airlock" alt="Contributors to airlock"></a>
 
 ## License
 
