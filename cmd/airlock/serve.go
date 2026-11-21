@@ -19,6 +19,7 @@ import (
 	"github.com/raven-clown/airlock/backend"
 	_ "github.com/raven-clown/airlock/backend/stdio"
 	_ "github.com/raven-clown/airlock/backend/streamable"
+	"github.com/raven-clown/airlock/internal/admin"
 	"github.com/raven-clown/airlock/internal/config"
 	"github.com/raven-clown/airlock/internal/gateway"
 	"github.com/raven-clown/airlock/internal/httpx"
@@ -26,10 +27,12 @@ import (
 	"github.com/raven-clown/airlock/internal/provision"
 	"github.com/raven-clown/airlock/internal/runtime"
 	"github.com/raven-clown/airlock/internal/store"
+	"github.com/raven-clown/airlock/telemetry"
 )
 
 const (
 	reloadEvery     = 2 * time.Second
+	gaugeEvery      = 5 * time.Second
 	shutdownTimeout = 10 * time.Second
 )
 
@@ -48,33 +51,49 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 	}
 	log := slog.New(slog.NewJSONHandler(logOut, nil))
 
-	cfg, err := loadConfig(*path, env)
-	if err != nil {
+	fail := func(err error) int {
 		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
 		return 1
+	}
+	cfg, err := loadConfig(*path, env)
+	if err != nil {
+		return fail(err)
 	}
 	st, err := store.Open(ctx, cfg.Storage.Driver, cfg.Storage.DSN)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
-		return 1
+		return fail(err)
 	}
 	defer func() { _ = st.Close() }()
 	if _, err := provision.Apply(ctx, st, store.DefaultOrg, cfg); err != nil {
-		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
-		return 1
+		return fail(err)
+	}
+	// The key goes to stderr as plain text, outside the JSON log, so it never reaches log storage.
+	key, err := admin.Bootstrap(ctx, st, store.DefaultOrg, false)
+	if err != nil {
+		return fail(err)
+	}
+	if key != "" {
+		_, _ = fmt.Fprintf(stderr, "airlock: no role bindings yet, so here is an admin API key. It is shown once:\n\n    %s\n\nUse it as \"Authorization: Bearer <key>\" on /admin/v1/. `airlock bootstrap-key` makes a new one.\n\n", key)
 	}
 	src := runtime.NewStoreSource(st, store.DefaultOrg, cfg)
 	snap, err := src.Load(ctx)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
-		return 1
+		return fail(err)
 	}
 	holder := runtime.NewHolder(snap)
 
+	metrics := telemetry.NewMetrics(version)
+	metrics.Revision(snap.Revision)
+	tracer, err := telemetry.NewTracer(telemetry.TracerConfig{
+		Endpoint: cfg.Telemetry.OTLPEndpoint, Headers: cfg.Telemetry.OTLPHeaders, SampleRatio: cfg.Telemetry.SampleRatio,
+		Version: version, Logger: log, Dropped: func(n int) { metrics.Dropped("otlp", n) },
+	})
+	if err != nil {
+		return fail(err)
+	}
 	sinks, err := buildSinks(snap.Audit, logOut)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
-		return 1
+		return fail(err)
 	}
 	sinks = append([]audit.Sink{st.AuditSink(store.DefaultOrg)}, sinks...)
 	pipe := audit.NewPipeline(sinks, audit.PipelineOptions{BufferSize: snap.Audit.BufferSize, Block: snap.Audit.OnOverflow == "block", Logger: log})
@@ -84,25 +103,29 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 		log.Error("starting backends", "error", err)
 	}
 	instance, _ := os.Hostname()
-	gw := gateway.New(gateway.Options{Backends: set, Runtime: holder, Audit: pipe, Logger: log, Instance: instance, Version: version})
+	gw := gateway.New(gateway.Options{Backends: set, Runtime: holder, Audit: pipe, Logger: log, Instance: instance, Version: version,
+		Metrics: metrics, Tracer: tracer})
+	metrics.SetCatalog(gw.Known)
 
 	ctx, cancel := context.WithCancel(ctx)
+	reloader := runtime.NewReloader(src, holder, runtime.WatchOptions{
+		Every:    reloadEvery,
+		Logger:   log,
+		OnResult: metrics.Reload,
+		OnSwap: func(s *runtime.Snapshot) {
+			metrics.Revision(s.Revision)
+			if err := set.Apply(ctx, s.Servers); err != nil {
+				log.Error("applying backends", "error", err)
+			}
+		},
+	})
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		provision.Watch(ctx, *path, env, st, store.DefaultOrg, provision.WatchOptions{Every: reloadEvery, Logger: log, Process: cfg})
 	})
-	wg.Go(func() {
-		runtime.Watch(ctx, src, holder, runtime.WatchOptions{
-			Every:  reloadEvery,
-			Logger: log,
-			OnSwap: func(s *runtime.Snapshot) {
-				if err := set.Apply(ctx, s.Servers); err != nil {
-					log.Error("applying backends", "error", err)
-				}
-			},
-		})
-	})
+	wg.Go(func() { reloader.Run(ctx) })
 	wg.Go(func() { runRetention(ctx, st, store.DefaultOrg, time.Hour, cfg.Audit.Retention, time.Now, log) })
+	wg.Go(func() { report(ctx, metrics, pipe, set, gaugeEvery) })
 
 	// The store closes last, after the loops stop and the audit pipeline flushes into it.
 	defer func() {
@@ -112,6 +135,7 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 		closeCtx, cancelClose := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 		defer cancelClose()
 		_ = pipe.Close(closeCtx)
+		_ = tracer.Shutdown(closeCtx)
 	}()
 
 	if *stdio {
@@ -125,13 +149,18 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 
 	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", snap.ListenAddr)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
-		return 1
+		return fail(err)
 	}
-	front := httpx.FrontOptions{Runtime: holder, Logger: log, Inflight: limits.NewInflight(cfg.Limits.MaxInflight)}
-	mcp := httpx.CheckOrigin(func() []string { return holder.Current().Settings.AllowedOrigins }, httpx.Front(front, gw.HTTPHandler()))
+	front := httpx.FrontOptions{Runtime: holder, Logger: log, Metrics: metrics, Tracer: tracer, Inflight: limits.NewInflight(cfg.Limits.MaxInflight)}
+	origins := func() []string { return holder.Current().Settings.AllowedOrigins }
+	adm := admin.New(admin.Deps{
+		Store: st, Org: store.DefaultOrg, Source: src, Runtime: holder, Reloader: reloader, Catalog: gw, Backends: set,
+		Process: cfg, Logger: log, Version: version, Instance: instance, Started: time.Now(),
+	})
 	srv := &http.Server{Handler: httpx.NewMux(httpx.Routes{
-		MCP:      mcp,
+		MCP:      httpx.CheckOrigin(origins, httpx.Front(front, gw.HTTPHandler())),
+		Admin:    httpx.CheckOrigin(origins, httpx.Front(front, adm)),
+		Metrics:  metrics.Handler(),
 		Metadata: httpx.ResourceMetadata(holder),
 		Ready:    ready(holder, set, st, log),
 	}), ReadHeaderTimeout: 10 * time.Second}
@@ -150,6 +179,28 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 		log.Warn("shutdown", "error", err)
 	}
 	return 0
+}
+
+// report keeps the gauges that have no event of their own current: audit drops and
+// whether each backend is up.
+func report(ctx context.Context, m *telemetry.Metrics, pipe *audit.Pipeline, set *backend.Set, every time.Duration) {
+	var dropped uint64
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		if n := pipe.Dropped(); n > dropped {
+			m.Dropped("audit", int(n-dropped))
+			dropped = n
+		}
+		for _, b := range set.All() {
+			m.BackendUp(b.Name(), b.Status().Up())
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // buildSinks creates the configured audit sinks. The stdout sink writes to the

@@ -17,10 +17,12 @@ var version = "dev"
 const usage = `usage: airlock <command>
 
 commands:
-  serve     run the gateway (--config file, --stdio for one local client)
-  migrate   apply database migrations and exit (--config file)
-  version   print the version
-  help      show this help
+  serve          run the gateway (--config file, --stdio for one local client)
+  migrate        apply database migrations and exit (--config file)
+  bootstrap-key  issue a new bootstrap admin key in the store (--config file)
+  keys new       print a new API key and its config file entry (--name n, --group g)
+  version        print the version
+  help           show this help
 `
 
 func main() {
@@ -40,6 +42,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return serve(ctx, args[1:], stdin, stdout, stderr, env)
 	case "migrate":
 		return migrate(ctx, args[1:], stdout, stderr, env)
+	case "bootstrap-key":
+		return bootstrapKey(ctx, args[1:], stdout, stderr, env)
+	case "keys":
+		return keysNew(args[1:], stdout, stderr)
 	case "version":
 		_, _ = fmt.Fprintf(stdout, "airlock %s\n", version)
 		return 0
