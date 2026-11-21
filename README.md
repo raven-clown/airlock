@@ -154,7 +154,7 @@ role_bindings:
     role: admin
 ```
 
-MCP clients find the provider through `/.well-known/oauth-protected-resource`, which a 401 points at. API keys (`alk_...`) keep working beside OIDC.
+MCP clients find the provider through `/.well-known/oauth-protected-resource`, which a 401 points at. Set `settings.public_url` to the address clients use, such as `https://airlock.example.com`: without it, that link is built from the request's `Host` header. API keys (`alk_...`) keep working beside OIDC.
 
 The admin API has three roles, bound to the same subjects as rules: `member` reads its own identity, tools and audit records, `viewer` reads everything and may call `/check`, and `admin` changes things. An `admin` can add stdio servers, which run commands on the airlock host, so the role is as strong as a shell there. `stdio.allowed_commands` in the file narrows which programs the API may start, but not the arguments they get.
 
