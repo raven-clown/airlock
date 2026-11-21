@@ -24,6 +24,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 - `${VAR}` references in `auth.headers` and `auth.discovery_headers` of Streamable HTTP servers are resolved from airlock's environment instead of being sent as written.
 
+### Security
+
+- airlock no longer follows a redirect from a `streamable_http` backend to another scheme, host or port, so a backend can't send the forwarded headers and token somewhere else (GO-2026-6911). A request to a backend that redirects that way, even from `http` to `https`, now fails: set `url` to the address it ends up at.
+
 ## [0.1.0] - 2026-11-05
 
 ### Added
