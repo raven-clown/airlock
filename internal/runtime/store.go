@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync"
 
 	"github.com/raven-clown/airlock/internal/config"
 	"github.com/raven-clown/airlock/internal/store"
@@ -15,6 +16,9 @@ type StoreSource struct {
 	st      *store.Store
 	org     string
 	process *config.Config
+
+	mu   sync.Mutex
+	last *Snapshot
 }
 
 // NewStoreSource returns a source reading org's resources from st. Process settings
@@ -39,8 +43,26 @@ func (s *StoreSource) Load(ctx context.Context) (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg, err := s.Config(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snap, err := BuildFrom(cfg, s.last)
+	if err != nil {
+		return nil, err
+	}
+	snap.Revision = rev
+	s.last = snap
+	return snap, nil
+}
+
+// Config returns the process settings with every resource in the store, checked and with
+// defaults filled in the way the file loader does it.
+func (s *StoreSource) Config(ctx context.Context) (*config.Config, error) {
 	cfg := *s.process
-	cfg.Servers, cfg.Rules, cfg.APIKeys, cfg.RoleBindings = nil, nil, nil, nil
+	cfg.Servers, cfg.Rules, cfg.APIKeys, cfg.RoleBindings, cfg.Profiles, cfg.ProfileBindings = nil, nil, nil, nil, nil, nil
 	cfg.Settings = config.Settings{}
 	if err := decode(ctx, s, store.KindServers, &cfg.Servers); err != nil {
 		return nil, err
@@ -54,15 +76,19 @@ func (s *StoreSource) Load(ctx context.Context) (*Snapshot, error) {
 	if err := decode(ctx, s, store.KindRoleBindings, &cfg.RoleBindings); err != nil {
 		return nil, err
 	}
+	if err := decode(ctx, s, store.KindProfiles, &cfg.Profiles); err != nil {
+		return nil, err
+	}
+	if err := decode(ctx, s, store.KindProfileBindings, &cfg.ProfileBindings); err != nil {
+		return nil, err
+	}
 	if err := s.settings(ctx, &cfg.Settings); err != nil {
 		return nil, err
 	}
-	snap, err := Build(&cfg)
-	if err != nil {
+	if err := config.Validate(&cfg); err != nil {
 		return nil, err
 	}
-	snap.Revision = rev
-	return snap, nil
+	return &cfg, nil
 }
 
 // decode appends every row of kind k, decoded, to the slice out points at.
