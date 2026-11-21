@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/raven-clown/airlock/audit"
@@ -15,13 +16,15 @@ import (
 	"github.com/raven-clown/airlock/policy"
 )
 
-func (h *handler) status(w http.ResponseWriter, _ *http.Request) {
+func (h *handler) status(w http.ResponseWriter, r *http.Request) {
 	snap := h.d.Runtime.Current()
 	now := h.d.Now()
 	backends := []map[string]any{}
 	if h.d.Backends != nil {
 		for _, b := range h.d.Backends.All() {
-			backends = append(backends, backendStatus(b))
+			st := backendStatus(b)
+			h.hideStderr(r, st)
+			backends = append(backends, st)
 		}
 	}
 	reload := map[string]any{}
@@ -185,8 +188,8 @@ func (h *handler) audit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if p.after != "" {
-		if q.BeforeID, err = strconv.ParseInt(p.after, 10, 64); err != nil || q.BeforeID < 1 {
-			h.fail(w, r, "audit", invalid("cursor", "cursor is not one this API returned"))
+		if q.BeforeTime, q.BeforeID, err = auditCursor(p.after); err != nil {
+			h.fail(w, r, "audit", err)
 			return
 		}
 	}
@@ -203,7 +206,19 @@ func (h *handler) audit(w http.ResponseWriter, r *http.Request) {
 	out := listJSON[audit.Event]{Items: events}
 	if len(events) > p.limit {
 		out.Items = events[:p.limit]
-		out.NextCursor = cursor(strconv.FormatInt(events[p.limit-1].ID, 10))
+		last := events[p.limit-1]
+		out.NextCursor = cursor(strconv.FormatInt(last.Time.UnixMilli(), 10) + ":" + strconv.FormatInt(last.ID, 10))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// auditCursor reads the time and id of the last record of the previous page.
+func auditCursor(after string) (time.Time, int64, error) {
+	ms, id, ok := strings.Cut(after, ":")
+	at, err1 := strconv.ParseInt(ms, 10, 64)
+	n, err2 := strconv.ParseInt(id, 10, 64)
+	if !ok || err1 != nil || err2 != nil || n < 1 {
+		return time.Time{}, 0, invalid("cursor", "cursor is not one this API returned")
+	}
+	return time.UnixMilli(at).UTC(), n, nil
 }

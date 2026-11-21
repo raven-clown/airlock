@@ -154,6 +154,7 @@ func (h *handler) list(k *kind) http.HandlerFunc {
 				h.fail(w, r, k.path, err)
 				return
 			}
+			h.hideStderr(r, v["status"])
 			out.Items = append(out.Items, v)
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -178,6 +179,7 @@ func (h *handler) answer(w http.ResponseWriter, r *http.Request, k *kind, row st
 		h.fail(w, r, k.what+" "+row.Name, err)
 		return
 	}
+	h.hideStderr(r, v["status"])
 	writeVersioned(w, status, row.Version, v)
 }
 

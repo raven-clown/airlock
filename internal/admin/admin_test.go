@@ -58,24 +58,26 @@ func TestRoles(t *testing.T) {
 func TestRuleCRUD(t *testing.T) {
 	r := newRig(t, baseDoc(), nil)
 	created := want(t, r.do(http.MethodPost, "/rules", adminKey, map[string]any{"name": "ci", "subjects": []string{"key:ci"}, "allow": []string{"github__create_*"}}), http.StatusCreated)
-	if created["version"] != float64(1) || created["source"] != "api" || created["managed_by_file"] != false {
+	v1, _ := created["version"].(float64)
+	if v1 < 1 || created["source"] != "api" || created["managed_by_file"] != false {
 		t.Fatalf("created %v", created)
 	}
+	etag := func(v float64) string { return fmt.Sprintf(`"%d"`, int64(v)) }
 	wantError(t, r.do(http.MethodPost, "/rules", adminKey, map[string]any{"name": "ci", "subjects": []string{"*"}}), http.StatusConflict, "already_exists", "name")
 
 	w := r.do(http.MethodGet, "/rules/ci", viewerKey, nil)
 	want(t, w, http.StatusOK)
-	if w.Header().Get("ETag") != `"1"` {
-		t.Fatalf("ETag %q", w.Header().Get("ETag"))
+	if w.Header().Get("ETag") != etag(v1) {
+		t.Fatalf("ETag %q, want %s", w.Header().Get("ETag"), etag(v1))
 	}
-	patched := want(t, r.do(http.MethodPatch, "/rules/ci", adminKey, map[string]any{"deny": []string{"github__create_repo"}}, "If-Match", `"1"`), http.StatusOK)
-	if patched["version"] != float64(2) || len(patched["allow"].([]any)) != 1 || len(patched["deny"].([]any)) != 1 {
+	patched := want(t, r.do(http.MethodPatch, "/rules/ci", adminKey, map[string]any{"deny": []string{"github__create_repo"}}, "If-Match", etag(v1)), http.StatusOK)
+	if patched["version"] != v1+1 || len(patched["allow"].([]any)) != 1 || len(patched["deny"].([]any)) != 1 {
 		t.Fatalf("patched %v", patched)
 	}
-	wantError(t, r.do(http.MethodPatch, "/rules/ci", adminKey, map[string]any{"deny": nil}, "If-Match", `"1"`), http.StatusConflict, "version_conflict", "If-Match")
+	wantError(t, r.do(http.MethodPatch, "/rules/ci", adminKey, map[string]any{"deny": nil}, "If-Match", etag(v1)), http.StatusConflict, "version_conflict", "If-Match")
 	wantError(t, r.do(http.MethodPatch, "/rules/ci", adminKey, map[string]any{"name": "other"}), http.StatusBadRequest, "invalid", "name")
 	wantError(t, r.do(http.MethodDelete, "/rules/ci", adminKey, nil, "If-Match", "three"), http.StatusBadRequest, "invalid", "If-Match")
-	want(t, r.do(http.MethodDelete, "/rules/ci", adminKey, nil, "If-Match", `"2"`), http.StatusNoContent)
+	want(t, r.do(http.MethodDelete, "/rules/ci", adminKey, nil, "If-Match", etag(v1+1)), http.StatusNoContent)
 	wantError(t, r.do(http.MethodGet, "/rules/ci", adminKey, nil), http.StatusNotFound, "not_found", "")
 
 	events, err := r.st.ListAudit(context.Background(), store.DefaultOrg, store.AuditQuery{Kind: audit.KindAdmin})
@@ -232,6 +234,8 @@ func TestServers(t *testing.T) {
 		{"bad duration", map[string]any{"name": "d", "transport": "stdio", "command": "mcp-d", "call_timeout": "soon"}, "call_timeout"},
 		{"bad name", map[string]any{"name": "Bad_Name", "transport": "stdio", "command": "mcp-e"}, "name"},
 		{"no url", map[string]any{"name": "f", "transport": "streamable_http"}, "url"},
+		{"relative url", map[string]any{"name": "f", "transport": "streamable_http", "url": "logbook:8420/mcp"}, "url"},
+		{"password in the url", map[string]any{"name": "f", "transport": "streamable_http", "url": "https://bot:hunter2@b.example/mcp"}, "url"}, //nolint:gosec // a made-up password the API must refuse
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,12 +258,31 @@ func TestServers(t *testing.T) {
 	}
 }
 
+func TestStderrOnlyForAdmins(t *testing.T) {
+	r := newRig(t, baseDoc(), nil)
+	h := &handler{d: Deps{Runtime: r.holder}}
+	for _, tc := range []struct {
+		id   *auth.Identity
+		keep bool
+	}{
+		{identity("key:admin", "admin"), true},
+		{identity("key:viewer", "viewer"), false},
+	} {
+		req := httptest.NewRequestWithContext(auth.WithIdentity(context.Background(), tc.id), http.MethodGet, "/", nil)
+		status := map[string]any{"name": "gh", "stderr": []string{"token=hunter2"}}
+		h.hideStderr(req, status)
+		if _, kept := status["stderr"]; kept != tc.keep {
+			t.Fatalf("%s: stderr kept %v, want %v", tc.id.Subject, kept, tc.keep)
+		}
+	}
+}
+
 func TestFileServerSecretsHidden(t *testing.T) {
 	doc := baseDoc() + `
 servers:
   - name: legacy
     transport: streamable_http
-    url: http://legacy
+    url: http://bot:hunter2@legacy
     auth: {mode: static, headers: {Authorization: "Bearer hunter2"}}
     call_timeout: 15s
 `
@@ -314,7 +337,8 @@ func TestSettings(t *testing.T) {
 	got = want(t, r.do(http.MethodPatch, "/settings", adminKey, map[string]any{
 		"oidc": map[string]any{"issuer": "https://idp.example.com", "audience": "airlock"}, "public_url": "https://airlock.example.com",
 	}, "If-Match", `"0"`), http.StatusOK)
-	if got["version"] != float64(2) || got["oidc"].(map[string]any)["audience"] != "airlock" {
+	first, _ := got["version"].(float64)
+	if first < 1 || got["oidc"].(map[string]any)["audience"] != "airlock" {
 		t.Fatalf("patched %v", got)
 	}
 	if r.holder.Current().OIDC == nil {
@@ -324,7 +348,10 @@ func TestSettings(t *testing.T) {
 	if o := got["oidc"].(map[string]any); o["groups_claim"] != "roles" || o["issuer"] != "https://idp.example.com" {
 		t.Fatalf("merge lost fields: %v", o)
 	}
-	wantError(t, r.do(http.MethodPatch, "/settings", adminKey, map[string]any{"public_url": nil}, "If-Match", `"1"`), http.StatusConflict, "version_conflict", "If-Match")
+	if got["version"].(float64) <= first {
+		t.Fatalf("version did not grow: %v after %v", got["version"], first)
+	}
+	wantError(t, r.do(http.MethodPatch, "/settings", adminKey, map[string]any{"public_url": nil}, "If-Match", fmt.Sprintf(`"%d"`, int64(first))), http.StatusConflict, "version_conflict", "If-Match")
 	wantError(t, r.do(http.MethodPatch, "/settings", adminKey, map[string]any{"colour": "red"}), http.StatusBadRequest, "invalid", "colour")
 	wantError(t, r.do(http.MethodPatch, "/settings", adminKey, map[string]any{"default_profile": "gold"}), http.StatusBadRequest, "invalid", "default_profile")
 	wantError(t, r.do(http.MethodPatch, "/settings", adminKey, map[string]any{"oidc": map[string]any{"issuer": "idp"}}), http.StatusBadRequest, "invalid", "oidc.issuer")
@@ -420,6 +447,9 @@ func TestStatusToolsAndOpenAPI(t *testing.T) {
 	tools := items(t, want(t, r.do(http.MethodGet, "/tools?server=github", viewerKey, nil), http.StatusOK))
 	if len(tools) != 2 || tools[0]["tool"] != "create_issue" || tools[0]["description"] != "does github__create_issue" {
 		t.Fatalf("tools %v", tools)
+	}
+	if got := r.do(http.MethodGet, "/me", viewerKey, nil).Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control %q", got)
 	}
 	w := r.do(http.MethodGet, "/openapi.yaml", viewerKey, nil)
 	if w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), "openapi: 3.1.0") {

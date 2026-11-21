@@ -2,12 +2,17 @@ package admin
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/raven-clown/airlock/auth"
 	"github.com/raven-clown/airlock/backend"
+	"github.com/raven-clown/airlock/internal/config"
+	"github.com/raven-clown/airlock/internal/runtime"
 	"github.com/raven-clown/airlock/internal/store"
 	"github.com/raven-clown/airlock/policy/glob"
 )
@@ -107,11 +112,23 @@ func (h *handler) decodeServer(raw []byte, _ json.RawMessage) (string, json.RawM
 			}
 		}
 	}
+	if u, err := url.Parse(cfg.URL); err == nil && u.User != nil {
+		return "", nil, invalid("url", "the url may not carry a user or password; send credentials in auth.headers with a ${VAR} reference")
+	}
 	if err := h.checkCommand(cfg); err != nil {
 		return "", nil, err
 	}
 	spec, err := json.Marshal(cfg)
 	return cfg.Name, spec, err
+}
+
+// viewURL hides the password a file-declared URL may carry.
+func viewURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	return u.Redacted()
 }
 
 // checkCommand holds a stdio server to stdio.allowed_commands when the file sets it.
@@ -186,7 +203,7 @@ func (h *handler) viewServer(row store.Row) (map[string]any, error) {
 	set("args", cfg.Args, len(cfg.Args) > 0)
 	set("env", secretValues(cfg.Env, envReference, func(string) bool { return false }), len(cfg.Env) > 0)
 	set("dir", cfg.Dir, cfg.Dir != "")
-	set("url", cfg.URL, cfg.URL != "")
+	set("url", viewURL(cfg.URL), cfg.URL != "")
 	set("call_timeout", formatDuration(cfg.CallTimeout), cfg.CallTimeout != 0)
 	set("required", cfg.Required, cfg.Required)
 	notSecret := func(k string) bool { return !secretHeader(k) }
@@ -228,4 +245,18 @@ func backendStatus(b backend.Backend) map[string]any {
 		out["stderr"] = st.Stderr
 	}
 	return out
+}
+
+// isAdmin reports whether the caller of r has the admin role.
+func (h *handler) isAdmin(r *http.Request) bool {
+	id, ok := auth.FromContext(r.Context())
+	return ok && runtime.HasRole(h.d.Runtime.Current().Role(id), config.RoleAdmin)
+}
+
+// hideStderr drops a stdio server's stderr lines for callers below admin, since a server can
+// print a credential there.
+func (h *handler) hideStderr(r *http.Request, status any) {
+	if m, ok := status.(map[string]any); ok && !h.isAdmin(r) {
+		delete(m, "stderr")
+	}
 }

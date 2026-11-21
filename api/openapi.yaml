@@ -42,6 +42,8 @@ paths:
             application/yaml:
               schema: { type: string }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /status:
@@ -55,6 +57,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Status" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /tools:
@@ -84,6 +88,8 @@ paths:
                   next_cursor: { type: string }
         "400": { $ref: "#/components/responses/Invalid" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /servers:
@@ -109,6 +115,8 @@ paths:
                   next_cursor: { type: string }
         "400": { $ref: "#/components/responses/Invalid" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       operationId: createServer
@@ -132,6 +140,8 @@ paths:
               schema: { $ref: "#/components/schemas/Server" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
@@ -151,6 +161,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Server" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
@@ -175,6 +187,8 @@ paths:
               schema: { $ref: "#/components/schemas/Server" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -188,6 +202,8 @@ paths:
         "204": { description: Removed. }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -215,6 +231,8 @@ paths:
                   next_cursor: { type: string }
         "400": { $ref: "#/components/responses/Invalid" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       operationId: createRule
@@ -234,6 +252,8 @@ paths:
               schema: { $ref: "#/components/schemas/Rule" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
@@ -253,6 +273,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Rule" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
@@ -277,6 +299,8 @@ paths:
               schema: { $ref: "#/components/schemas/Rule" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -290,6 +314,8 @@ paths:
         "204": { description: Removed. }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -317,6 +343,8 @@ paths:
                   next_cursor: { type: string }
         "400": { $ref: "#/components/responses/Invalid" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       operationId: createRoleBinding
@@ -336,6 +364,8 @@ paths:
               schema: { $ref: "#/components/schemas/RoleBinding" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
@@ -355,6 +385,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RoleBinding" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
@@ -379,6 +411,8 @@ paths:
               schema: { $ref: "#/components/schemas/RoleBinding" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -392,6 +426,8 @@ paths:
         "204": { description: Removed. }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -419,6 +455,8 @@ paths:
                   next_cursor: { type: string }
         "400": { $ref: "#/components/responses/Invalid" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       operationId: createProfile
@@ -440,6 +478,8 @@ paths:
               schema: { $ref: "#/components/schemas/Profile" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
@@ -459,6 +499,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Profile" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
@@ -483,6 +525,8 @@ paths:
               schema: { $ref: "#/components/schemas/Profile" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -496,6 +540,8 @@ paths:
         "204": { description: Removed. }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -523,6 +569,8 @@ paths:
                   next_cursor: { type: string }
         "400": { $ref: "#/components/responses/Invalid" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       operationId: createProfileBinding
@@ -542,6 +590,8 @@ paths:
               schema: { $ref: "#/components/schemas/ProfileBinding" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
@@ -561,6 +611,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ProfileBinding" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
@@ -585,6 +637,8 @@ paths:
               schema: { $ref: "#/components/schemas/ProfileBinding" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -598,6 +652,8 @@ paths:
         "204": { description: Removed. }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -625,6 +681,8 @@ paths:
                   next_cursor: { type: string }
         "400": { $ref: "#/components/responses/Invalid" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       operationId: createAPIKey
@@ -644,6 +702,8 @@ paths:
               schema: { $ref: "#/components/schemas/APIKeyCreated" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
@@ -663,6 +723,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/APIKey" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
@@ -687,6 +749,8 @@ paths:
               schema: { $ref: "#/components/schemas/APIKey" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -700,6 +764,8 @@ paths:
         "204": { description: Removed. }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -722,6 +788,8 @@ paths:
               schema: { $ref: "#/components/schemas/APIKey" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -739,6 +807,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Settings" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
     patch:
       operationId: updateSettings
@@ -764,6 +834,8 @@ paths:
               schema: { $ref: "#/components/schemas/Settings" }
         "400": { $ref: "#/components/responses/InvalidWrite" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
@@ -779,6 +851,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Me" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /me/tools:
@@ -804,6 +878,8 @@ paths:
                   next_cursor: { type: string }
         "400": { $ref: "#/components/responses/Invalid" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /check:
@@ -832,6 +908,8 @@ paths:
                     items: { $ref: "#/components/schemas/Decision" }
         "400": { $ref: "#/components/responses/Invalid" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "413": { $ref: "#/components/responses/TooLarge" }
 
@@ -839,8 +917,11 @@ paths:
     get:
       operationId: listAudit
       summary: |
-        Audit records, newest first: every tool call, denied and limited ones included, and
-        every admin write. A member sees only their own.
+        Audit records, newest first by the time of the event: tool calls, denied and limited
+        ones included, and every admin write. A member sees only their own. Admin records
+        commit with the write they describe. Tool call records go through a buffer, and with
+        `audit.on_overflow: drop` (the default) a full buffer drops them and counts the loss in
+        `airlock_events_dropped_total{sink="audit"}`; `block` keeps every record instead.
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
@@ -867,6 +948,8 @@ paths:
                   next_cursor: { type: string }
         "400": { $ref: "#/components/responses/Invalid" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/Limited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
 components:
@@ -938,6 +1021,28 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    Limited:
+      description: |
+        The caller's `requests` limit refused the call: `rate_limited` with `Retry-After`, or
+        `concurrency_limited` until one of their running calls ends. `RateLimit-Policy` and
+        `RateLimit` say how much is left.
+      headers:
+        Retry-After: { schema: { type: integer } }
+        RateLimit-Policy: { schema: { type: string } }
+        RateLimit: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unavailable:
+      description: |
+        `overloaded` when this instance is at `limits.max_inflight` or the limit counters
+        cannot be reached, `auth_unavailable` when the identity provider's keys cannot be
+        fetched. Both send `Retry-After`.
+      headers:
+        Retry-After: { schema: { type: integer } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     TooLarge:
       description: The body is larger than 1 MiB.
       content:
@@ -996,7 +1101,7 @@ components:
         since: { type: string, format: date-time }
         stderr:
           type: array
-          description: The last lines a stdio server wrote to stderr.
+          description: The last lines a stdio server wrote to stderr, shown to admins only.
           items: { type: string }
 
     Tool:
