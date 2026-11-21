@@ -7,10 +7,36 @@ import (
 	"github.com/raven-clown/airlock/policy/glob"
 )
 
-// NewMux routes /mcp, /healthz and /readyz.
-func NewMux(mcp http.Handler, ready func() error) *http.ServeMux {
+// Routes are the handlers NewMux serves. A nil handler is left out.
+type Routes struct {
+	MCP      http.Handler
+	Admin    http.Handler
+	Metrics  http.Handler
+	Metadata http.Handler
+	Ready    func() error
+}
+
+// NewMux routes /mcp, /admin/v1/, /metrics, the protected resource metadata, /healthz and /readyz.
+func NewMux(rt Routes) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", mcp)
+	ready := rt.Ready
+	if ready == nil {
+		ready = func() error { return nil }
+	}
+	if rt.MCP != nil {
+		mux.Handle("/mcp", rt.MCP)
+	}
+	if rt.Admin != nil {
+		mux.Handle("/admin/v1/", rt.Admin)
+	}
+	if rt.Metrics != nil {
+		mux.Handle("GET /metrics", rt.Metrics)
+	}
+	if rt.Metadata != nil {
+		// Clients look for the document at the root and with the resource's path appended.
+		mux.Handle(MetadataPath, rt.Metadata)
+		mux.Handle(MetadataPath+"/mcp", rt.Metadata)
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))
 	})

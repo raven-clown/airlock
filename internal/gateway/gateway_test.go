@@ -24,6 +24,7 @@ import (
 	"github.com/raven-clown/airlock/backend"
 	_ "github.com/raven-clown/airlock/backend/streamable"
 	"github.com/raven-clown/airlock/internal/config"
+	"github.com/raven-clown/airlock/internal/httpx"
 	"github.com/raven-clown/airlock/internal/runtime"
 	"github.com/raven-clown/airlock/internal/testutil/mcpserver"
 	"github.com/raven-clown/airlock/policy/rules"
@@ -128,14 +129,15 @@ func newHarness(t *testing.T) *harness {
 	pipe := audit.NewPipeline([]audit.Sink{sink}, audit.PipelineOptions{BatchSize: 1, Logger: log})
 	t.Cleanup(func() { _ = pipe.Close(context.Background()) })
 
-	gw := New(Options{Backends: set, Runtime: runtime.NewHolder(snap), Audit: pipe, Logger: log, Instance: "test", Version: "test"})
+	holder := runtime.NewHolder(snap)
+	gw := New(Options{Backends: set, Runtime: holder, Audit: pipe, Logger: log, Instance: "test", Version: "test"})
 	h := &harness{gw: gw, sink: sink, logs: logs, alpha: alpha, set: set}
 	waitFor(t, "backend tools", func() bool {
 		names := h.catalogNames()
 		return slices.Contains(names, "alpha__echo") && slices.Contains(names, "beta__echo")
 	})
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", gw.HTTPHandler())
+	mux.Handle("/mcp", httpx.Front(httpx.FrontOptions{Runtime: holder, Logger: log}, gw.HTTPHandler()))
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	h.url = ts.URL + "/mcp"

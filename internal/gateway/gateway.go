@@ -3,8 +3,6 @@ package gateway
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +22,7 @@ import (
 	"github.com/raven-clown/airlock/internal/naming"
 	"github.com/raven-clown/airlock/internal/runtime"
 	"github.com/raven-clown/airlock/policy"
+	"github.com/raven-clown/airlock/telemetry"
 )
 
 // Options are a gateway's dependencies.
@@ -72,6 +71,9 @@ func New(opts Options) *Gateway {
 			if id, ok := auth.FromContext(r.Context()); ok {
 				ctx = auth.WithIdentity(ctx, id)
 			}
+			if span := telemetry.SpanFrom(r.Context()); span != nil {
+				ctx = telemetry.WithSpan(ctx, span)
+			}
 			return httpx.WithForwardHeaders(ctx, r.Header)
 		}),
 	)
@@ -83,21 +85,15 @@ func New(opts Options) *Gateway {
 // MCPServer returns the underlying mcp-go server.
 func (g *Gateway) MCPServer() *server.MCPServer { return g.mcp }
 
-// HTTPHandler is the Streamable HTTP endpoint with authentication and session binding in front.
+// HTTPHandler is the Streamable HTTP endpoint with session binding in front. It expects
+// httpx.Front around it to sign the caller in.
 func (g *Gateway) HTTPHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Request-Id") == "" {
-			r.Header.Set("X-Request-Id", newRequestID())
-		}
-		w.Header().Set("X-Request-Id", r.Header.Get("X-Request-Id"))
-		id, err := g.opts.Runtime.Current().Authenticator.Authenticate(r.Context(), r)
-		if err != nil {
-			g.log.Info("authentication failed", "error", err, "request_id", r.Header.Get("X-Request-Id"))
-			w.Header().Set("WWW-Authenticate", `Bearer realm="airlock"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		id, ok := auth.FromContext(r.Context())
+		if !ok {
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "a valid API key or token is required")
 			return
 		}
-		r = r.WithContext(auth.WithIdentity(r.Context(), id))
 		sid := r.Header.Get("Mcp-Session-Id")
 		if sid == "" {
 			g.streamable.ServeHTTP(&mintWriter{ResponseWriter: w, sessions: g.sessions, subject: id.Subject}, r)
@@ -235,10 +231,4 @@ func traceID(traceparent string) string {
 		return ""
 	}
 	return parts[1]
-}
-
-func newRequestID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
 }
