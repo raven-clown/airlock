@@ -91,7 +91,19 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+      # GO-2026-6911 is fixed in mcp-go v1.6.0 by https://github.com/mark3labs/mcp-go/pull/1192,
+      # but vulndb lists no fixed version yet. Remove the skip once vulndb lists a fix.
+      - name: govulncheck
+        env:
+          SKIP: GO-2026-6911
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 -format json ./... > "$RUNNER_TEMP/vuln.json"
+          found=$(jq -r 'select(.finding.trace[0].function != null) | .finding.osv' "$RUNNER_TEMP/vuln.json" | sort -u | grep -vxF "$SKIP" || true)
+          if [ -n "$found" ]; then
+            echo "$found"
+            go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+            exit 1
+          fi
 
   release-check:
     name: release dry run
