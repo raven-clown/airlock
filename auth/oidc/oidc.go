@@ -180,6 +180,11 @@ func (a *Authenticator) Verify(ctx context.Context, token string) (*auth.Identit
 	if subject == "" {
 		return nil, reject("claims", fmt.Sprintf("claim %q is missing or not a string", a.cfg.SubjectClaim))
 	}
+	// API key callers have the subject key:<name>, so a token naming one could pass for
+	// that key wherever subjects are compared, such as a session's owner.
+	if strings.HasPrefix(subject, "key:") {
+		return nil, reject("claims", fmt.Sprintf("claim %q starts with key:, which only API keys may use", a.cfg.SubjectClaim))
+	}
 	profile, _ := lookupClaim(claims, a.cfg.ProfileClaim).(string)
 	return &auth.Identity{
 		Subject: subject,

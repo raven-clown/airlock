@@ -57,6 +57,7 @@ func TestVerify(t *testing.T) {
 		{name: "wrong audience", change: func(c map[string]any) { c["aud"] = "other" }, reason: "audience"},
 		{name: "audience list", change: func(c map[string]any) { c["aud"] = []string{"other", oidctest.Audience} }},
 		{name: "no subject", change: func(c map[string]any) { delete(c, "sub") }, reason: "claims"},
+		{name: "subject posing as a key", change: func(c map[string]any) { c["sub"] = "key:bootstrap" }, reason: "claims"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
