@@ -229,6 +229,38 @@ rules:
 	}
 }
 
+func TestServeOpsListener(t *testing.T) {
+	addr, stdout, _ := startServe(t, "ops_listen_addr: 127.0.0.1:0\n")
+	var ops string
+	waitFor(t, "the ops listener", func() bool {
+		for _, line := range strings.Split(stdout.String(), "\n") {
+			var rec struct{ Msg, Addr string }
+			if json.Unmarshal([]byte(line), &rec) == nil && rec.Msg == "ops listening" {
+				ops = rec.Addr
+				return true
+			}
+		}
+		return false
+	})
+	get := func(base, path string) int {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+base+path, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	for _, path := range []string{"/metrics", "/healthz", "/readyz"} {
+		if code := get(ops, path); code != http.StatusOK {
+			t.Errorf("ops %s = %d", path, code)
+		}
+		if code := get(addr, path); code != http.StatusNotFound {
+			t.Errorf("main %s = %d, want it only on the ops listener", path, code)
+		}
+	}
+}
+
 func TestKeysNew(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"keys", "new", "--name", "ci-bot", "--group", "eng", "--group", "ops"}, nil, &stdout, &stderr, config.Env{}); code != 0 {

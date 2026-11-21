@@ -244,6 +244,9 @@ func TestServeStdio(t *testing.T) {
 	if !strings.Contains(stderr.String(), `"msg"`) {
 		t.Error("no logs on stderr in stdio mode")
 	}
+	if strings.Contains(stderr.String(), apikey.Prefix) {
+		t.Error("stdio mode printed a bootstrap key into its log stream")
+	}
 
 	_ = c.Close()
 	_ = cOut.Close()

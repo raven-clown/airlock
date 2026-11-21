@@ -67,10 +67,13 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 	if _, err := provision.Apply(ctx, st, store.DefaultOrg, cfg); err != nil {
 		return fail(err)
 	}
-	// The key goes to stderr as plain text, outside the JSON log, so it never reaches log storage.
-	key, err := admin.Bootstrap(ctx, st, store.DefaultOrg, false)
-	if err != nil {
-		return fail(err)
+	// The key goes to stderr as plain text, outside the JSON log, so it never reaches log
+	// storage. In stdio mode stderr is the log and there is no admin API, so there is no key.
+	var key string
+	if !*stdio {
+		if key, err = admin.Bootstrap(ctx, st, store.DefaultOrg, false); err != nil {
+			return fail(err)
+		}
 	}
 	if key != "" {
 		_, _ = fmt.Fprintf(stderr, "airlock: no role bindings yet, so here is an admin API key. It is shown once:\n\n    %s\n\nUse it as \"Authorization: Bearer <key>\" on /admin/v1/. `airlock bootstrap-key` makes a new one.\n\n", key)
@@ -157,28 +160,47 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 		Store: st, Org: store.DefaultOrg, Source: src, Runtime: holder, Reloader: reloader, Catalog: gw, Backends: set,
 		Process: cfg, Logger: log, Version: version, Instance: instance, Started: time.Now(),
 	})
-	srv := &http.Server{Handler: httpx.NewMux(httpx.Routes{
+	routes := httpx.Routes{
 		MCP:      httpx.CheckOrigin(origins, httpx.Front(front, gw.HTTPHandler())),
 		Admin:    httpx.CheckOrigin(origins, httpx.Front(front, adm)),
-		Metrics:  metrics.Handler(),
 		Metadata: httpx.ResourceMetadata(holder),
-		Ready:    ready(holder, set, st, log),
-	}), ReadHeaderTimeout: 10 * time.Second}
+	}
+	ops := httpx.Routes{Metrics: metrics.Handler(), Ready: ready(holder, set, st, log)}
+	servers := []*http.Server{}
+	listeners := []net.Listener{ln}
+	if cfg.OpsListenAddr == "" {
+		routes.Metrics, routes.Ready = ops.Metrics, ops.Ready
+	} else {
+		opsLn, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.OpsListenAddr)
+		if err != nil {
+			_ = ln.Close()
+			return fail(err)
+		}
+		listeners = append(listeners, opsLn)
+		servers = append(servers, &http.Server{Handler: httpx.NewMux(ops), ReadHeaderTimeout: 10 * time.Second})
+		log.Info("ops listening", "addr", opsLn.Addr().String())
+	}
+	servers = append([]*http.Server{{Handler: httpx.NewMux(routes), ReadHeaderTimeout: 10 * time.Second}}, servers...)
 	log.Info("listening", "addr", ln.Addr().String(), "version", version)
-	errc := make(chan error, 1)
-	go func() { errc <- srv.Serve(ln) }()
+	errc := make(chan error, len(servers))
+	for i, srv := range servers {
+		go func() { errc <- srv.Serve(listeners[i]) }()
+	}
+	code := 0
 	select {
 	case <-ctx.Done():
 	case err := <-errc:
 		log.Error("server stopped", "error", err)
-		return 1
+		code = 1
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Warn("shutdown", "error", err)
+	for _, srv := range servers {
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Warn("shutdown", "error", err)
+		}
 	}
-	return 0
+	return code
 }
 
 // report keeps the gauges that have no event of their own current: audit drops and

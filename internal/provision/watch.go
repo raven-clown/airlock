@@ -105,5 +105,14 @@ func processChanges(was, now *config.Config) []string {
 	if !reflect.DeepEqual(was.Audit, now.Audit) {
 		keys = append(keys, "audit")
 	}
+	if was.OpsListenAddr != now.OpsListenAddr {
+		keys = append(keys, "ops_listen_addr")
+	}
+	if !reflect.DeepEqual(was.Telemetry, now.Telemetry) {
+		keys = append(keys, "telemetry")
+	}
+	if was.Limits != now.Limits {
+		keys = append(keys, "limits")
+	}
 	return keys
 }

@@ -66,6 +66,9 @@ func TestMux(t *testing.T) {
 	if w := get(t, mux, "/mcp"); w.Code != http.StatusTeapot {
 		t.Errorf("/mcp = %d", w.Code)
 	}
+	if w := get(t, NewMux(Routes{MCP: mcp}), "/healthz"); w.Code != http.StatusNotFound {
+		t.Errorf("healthz without Ready = %d, want it on the ops listener only", w.Code)
+	}
 
 	w := get(t, mux, "/readyz")
 	var body map[string]string

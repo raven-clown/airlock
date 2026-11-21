@@ -23,7 +23,10 @@ import (
 
 // Config is the whole config file.
 type Config struct {
-	ListenAddr      string           `yaml:"listen_addr"`
+	ListenAddr string `yaml:"listen_addr"`
+	// OpsListenAddr, when set, serves /healthz, /readyz and /metrics there instead of on
+	// listen_addr, so they can stay off the public port.
+	OpsListenAddr   string           `yaml:"ops_listen_addr"`
 	Storage         Storage          `yaml:"storage"`
 	Stdio           StdioConfig      `yaml:"stdio"`
 	Audit           Audit            `yaml:"audit"`
@@ -146,7 +149,7 @@ func OSEnv() Env {
 
 // processKeys are expanded at load time. The rest are resources whose ${VAR} references are kept.
 var processKeys = map[string]bool{
-	"listen_addr": true, "storage": true, "stdio": true, "audit": true, "settings": true, "telemetry": true, "limits": true,
+	"listen_addr": true, "ops_listen_addr": true, "storage": true, "stdio": true, "audit": true, "settings": true, "telemetry": true, "limits": true,
 }
 
 // Default returns the config used when no file is given.
