@@ -21,27 +21,30 @@ Run it locally with `go run ./cmd/airlock serve --config airlock.yaml`, or `--st
 
 On Windows without a C compiler, run `go test ./...` locally. CI runs `-race` on Linux and macOS.
 
-The store suite also runs on Postgres: `AIRLOCK_TEST_POSTGRES_DSN=postgres://... go test -tags integration ./internal/store/...`. CI does this in the `postgres` job. Store changes go through `internal/store/storetest`, so both engines get the same tests.
+The store suite and the two-replica test also run on Postgres: `AIRLOCK_TEST_POSTGRES_DSN=postgres://... go test -tags integration ./internal/store/... ./internal/admin/...`. CI does this in the `postgres` job. Store changes go through `internal/store/storetest`, so both engines get the same tests. A migration after `0001` only adds tables and columns that are nullable or have a default; `TestMigrationsExpandOnly` fails otherwise, unless the file says `-- contract:` and why.
 
 ## Layout
 
-Built so far: `cmd/airlock` (`serve`, `migrate`, `version`, `help`), `internal/naming`, `policy`, `policy/glob`, `policy/rules`, `auth`, `auth/apikey`, `backend`, `backend/stdio`, `backend/streamable`, `audit` (pipeline, stdout and file sinks), `internal/config`, `internal/httpx` (forwarded headers, mux, Origin check), `internal/runtime` (snapshots from the store), `internal/store` (SQLite and Postgres), `internal/provision`, `internal/gateway` and `internal/testutil`. The rest is the planned layout from `docs/design.md`:
+Only packages that exist are listed. `internal/secrets` (encrypted secret fields) and the `validate`, `check` and `tools` commands are planned in `docs/design.md`.
 
-- `cmd/airlock`: the CLI (`serve`, `validate`, `migrate`, `check`, `tools`, `keys new`, `bootstrap-key`, `version`)
-- `auth`, `policy`, `backend`, `audit`, `ratelimit`: public plugin interfaces and registries, with built-ins in subpackages
-- `policy/glob`: `*` wildcard matching for tool patterns
-- `telemetry`: Prometheus metrics and OTLP tracing
+- `cmd/airlock`: the CLI (`serve`, `migrate`, `bootstrap-key`, `keys new`, `version`, `help`). `serve` wires everything: provisioning, the first-start key, the reloader, metrics, the tracer, the gateway, the admin API and the listeners
+- `auth`, `auth/apikey`, `auth/oidc`: identities and the authenticator chain. `auth/oidc` checks JWTs against a cached JWKS; `auth/oidc/oidctest` is a local issuer for tests
+- `policy`, `policy/glob`, `policy/rules`: the policy interface, `*` matching and the built-in allow and deny rules
+- `backend`, `backend/stdio`, `backend/streamable`: the backend interface and the two transports
+- `audit`: records, the pipeline and the stdout and file sinks
+- `ratelimit`: rates (`30/m`) and the counter `Store` interface, with an in-memory GCRA store. A shared store for replicas goes behind the same interface
+- `telemetry`: the Prometheus registry and airlock's metrics, and the tracer with its OTLP/HTTP exporter. No label or span attribute may hold a subject, a key, a token or tool arguments
+- `internal/limits`: the shared profiles (`requests`, `tools.calls`), profile resolution and the limiter
 - `internal/naming`: building, checking and splitting `<server>__<tool>` names
-- `internal/config`: YAML loading, env overrides, file watching
-- `internal/store`: SQLite and Postgres stores and migrations
-- `internal/provision`: syncing file-declared resources into the store
-- `internal/runtime`: the immutable snapshot swapped on each revision
-- `internal/gateway`: the mcp-go server, catalog and router
-- `internal/admin`: admin API handlers generated from `api/openapi.yaml`
-- `internal/secrets`: encryption of secret fields at rest
-- `internal/httpx`: listener, health, readiness and metrics routes
+- `internal/config`: YAML loading, env overrides and `Validate`, which the admin API uses too
+- `internal/store`: SQLite and Postgres stores and migrations. `Create`, `Update` and `Delete` take audit events that commit in the same transaction
+- `internal/provision`: syncing file-declared resources into the store, and watching the file
+- `internal/runtime`: the immutable snapshot (policy, authenticators, roles, limiter), `StoreSource.ConfigWith` to check a change before it is written, and the `Reloader` that swaps snapshots every 2 seconds and right after an admin write
+- `internal/httpx`: forwarded headers, the mux, the Origin check, and `Front`, which every authenticated route goes through (request id, span, metrics, `max_inflight`, sign-in, the `requests` limit)
+- `internal/gateway`: the mcp-go server, catalog and router, with the `tools.calls` limit, tool metrics and spans
+- `internal/admin`: the `/admin/v1/` handlers and the first-start bootstrap. `spec_test.go` checks that the served routes and `api/openapi.yaml` match both ways and validates every response the tests get against the file, so a new endpoint goes in the file first
 - `internal/testutil`: test fakes and the test MCP server
-- `api/openapi.yaml`: the admin API description, source of truth for its handlers
+- `api/openapi.yaml`: the admin API description, embedded by package `api`
 - `docs/`: design, milestone issues, and implementation plans in `docs/plans/`
 
 ## Rules

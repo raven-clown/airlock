@@ -15,7 +15,7 @@
 
 One MCP endpoint in front of all your MCP servers, with real logins, per-person permissions, an audit log and rate limits.
 
-> **Status: early, [v0.1.0](https://github.com/raven-clown/airlock/releases/tag/v0.1.0).** The gateway core works: one endpoint in front of stdio and Streamable HTTP servers, API key login, allow and deny rules, filtered tool lists, an audit log in SQL, and SQLite or Postgres. OIDC login, rate limits, the admin API and `airlock check` come next. Try it, but don't run it in production yet. Issues and pull requests are very welcome.
+> **Status: early, [v0.2.0](https://github.com/raven-clown/airlock/releases/tag/v0.2.0).** One endpoint in front of stdio and Streamable HTTP servers, OIDC and API key login, the `admin`, `viewer` and `member` roles, allow and deny rules, filtered tool lists, an audit log in SQL, the admin API with OpenAPI, limits from shared profiles, Prometheus metrics and OTLP traces, on SQLite or Postgres with several replicas. Try it, but don't run it in production yet. Issues and pull requests are very welcome.
 
 ## How it works
 
@@ -41,10 +41,11 @@ airlock sits between MCP clients (editors, agents, scripts) and your MCP servers
 
 - **One endpoint.** Clients connect once and see every tool, prefixed with the server name: `github__create_issue`, `files__read_file`.
 - **Real identity.** Log in with any OIDC provider (Keycloak, Entra ID, Auth0, Dex, IdpForge) or use API keys for services. Groups come from your identity provider.
-- **Permissions you can explain.** Allow and deny rules on users, groups and keys. Deny always wins and the default is deny. `airlock check` tells you which rule decided, without calling anything.
+- **Permissions you can explain.** Allow and deny rules on users, groups and keys. Deny always wins and the default is deny. `POST /admin/v1/check` tells you which rule decided, without calling anything.
 - **Filtered tool lists.** People only see the tools they may use. A hidden tool can't be called either.
-- **Audit log.** Every call, allowed or not, is recorded with who, what, which rule and how long it took. Query it over the API.
-- **Rate limits** per user, group, key and tool.
+- **Audit log.** Every call, allowed or not, and every admin change is recorded with who, what, which rule and how long it took. Query it over the API.
+- **Limits** from the profiles every mothership project shares: requests and tool calls per key, user or group, with the standard `RateLimit` headers.
+- **Metrics and traces.** Prometheus on `/metrics` and OTLP traces, with a span for each request, tool call and backend call.
 - **Runs anywhere.** One Go binary with embedded SQLite and no other dependencies. Use Postgres when you want several replicas. No Docker needed.
 - **Built for a console.** Everything is managed through a JSON admin API (`/admin/v1/`, described in OpenAPI), so a new user can set it up without writing YAML. Teams that prefer GitOps can declare everything in a YAML file instead.
 
@@ -58,7 +59,7 @@ There is no paid edition and no license key. SSO, roles and permissions, audit l
 |---|---|---|---|---|
 | Per-user login with OIDC groups | in the paid Enterprise Gateway | not mentioned | JWT, API keys, OAuth | yes, free |
 | Allow and deny rules per tool | in the paid Enterprise Gateway | tool groups per client | CEL policies | yes, free |
-| Explain a decision | not mentioned | not mentioned | not mentioned | `airlock check` |
+| Explain a decision | not mentioned | not mentioned | not mentioned | `POST /admin/v1/check` |
 | Audit log | in the paid Enterprise Gateway (SIEM) | "observability hooks" | OpenTelemetry | in SQL, queryable over the API |
 | Rate limits | not mentioned | not mentioned | yes | yes |
 | Needs Docker or Kubernetes | Docker | no | no, Kubernetes optional | no |
@@ -79,21 +80,37 @@ Prebuilt binaries for Linux, macOS and Windows are planned.
 
 ## A taste
 
-The YAML file below works today with `airlock serve --config airlock.yaml`. The admin API and `airlock check` are planned and don't work yet.
+Start airlock with no config at all. On first start it prints an admin API key to stderr, once:
 
 ```shell
 airlock serve
-# prints a one-time admin key on first start
+export KEY=alk_...   # the key it printed
+```
 
+Add a server, a rule and a key for a script, all over the admin API:
+
+```shell
 curl -H "Authorization: Bearer $KEY" localhost:8080/admin/v1/servers \
-  -d '{"name":"github","transport":"stdio","command":"github-mcp-server","args":["stdio"]}'
+  -d '{"name":"github","transport":"stdio","command":"github-mcp-server","args":["stdio"],
+       "env":{"GITHUB_PERSONAL_ACCESS_TOKEN":"${GITHUB_TOKEN}"}}'
 
 curl -H "Authorization: Bearer $KEY" localhost:8080/admin/v1/rules \
   -d '{"name":"eng","subjects":["group:eng"],"allow":["github__*"],"deny":["github__delete_*"]}'
 
-airlock check --user alice --group eng github__delete_repo
-# DENY  github__delete_repo  rule=eng  reason="denied by pattern github__delete_*"
+curl -H "Authorization: Bearer $KEY" localhost:8080/admin/v1/api-keys \
+  -d '{"name":"ci","groups":["eng"]}'
+# the answer holds the new key, once
 ```
+
+Ask who may call what, without calling anything:
+
+```shell
+curl -H "Authorization: Bearer $KEY" localhost:8080/admin/v1/check \
+  -d '{"user":"alice","groups":["eng"],"tools":["github__delete_repo"]}'
+# {"items":[{"tool":"github__delete_repo","allow":false,"rule":"eng","reason":"denied by pattern github__delete_*"}]}
+```
+
+Secrets stay out of the database: server `env` values, and headers such as `Authorization`, are `${VAR}` references to airlock's environment, resolved when the server starts. The whole API is described in [api/openapi.yaml](api/openapi.yaml), which airlock also serves at `/admin/v1/openapi.yaml`.
 
 Or the same thing in a file:
 
@@ -118,9 +135,71 @@ storage:
   dsn: postgres://airlock:secret@db:5432/airlock
 ```
 
-Resources in the file are written to the database at startup and whenever the file changes, and every instance picks up a change within two seconds. `airlock migrate` applies database migrations without starting the server.
+Resources in the file are written to the database at startup and whenever the file changes, and are read-only through the API. Every instance picks up a change within two seconds, and the instance that took an admin write has it live before it answers. `airlock migrate` applies database migrations without starting the server.
+
+## Sign-in and roles
+
+Any OIDC provider works through plain discovery and JWKS. Tokens are checked locally against the provider's cached keys, so no call goes to the provider per request:
+
+```yaml
+settings:
+  oidc:
+    issuer: https://idp.example.com
+    audience: airlock
+    subject_claim: email          # default sub
+    groups_claim: groups          # a dotted path such as realm_access.roles works too
+role_bindings:
+  - name: admins
+    subjects: ["group:airlock-admins"]
+    role: admin
+```
+
+MCP clients find the provider through `/.well-known/oauth-protected-resource`, which a 401 points at. API keys (`alk_...`) keep working beside OIDC.
+
+The admin API has three roles, bound to the same subjects as rules: `member` reads its own identity, tools and audit records, `viewer` reads everything and may call `/check`, and `admin` changes things. An `admin` can add stdio servers, which run commands on the airlock host, so the role is as strong as a shell there. `stdio.allowed_commands` in the file narrows which programs the API may start, but not the arguments they get.
+
+## Limits
+
+Limits come from the profiles every mothership project reads. airlock enforces `requests` on every HTTP request and `tools.calls` on every tool call, and ignores the keys of the other projects, so one profiles list works for all four:
+
+```yaml
+profiles:
+  - name: free
+    limits:
+      requests: {rate: 120/m, concurrency: 8}
+      tools.calls: {rate: 30/m, concurrency: 2}
+profile_bindings:
+  - {name: ci, subject: "key:ci", profile: free}
+settings:
+  default_profile: free
+limits:
+  max_inflight: 1000     # per instance; past it, 503 overloaded
+```
+
+The most specific binding wins: key, user, group, the token's `tier` claim, then `default_profile`. `settings.org_profile` adds a limit every call must also pass. A request over `requests` gets 429 `rate_limited` or `concurrency_limited` with `Retry-After`, and every response carries `RateLimit-Policy` and `RateLimit`. A tool call over `tools.calls` gets a tool error the model can read, such as `rate_limited: tools.calls allows 30/m for user:alice; retry in 12s`, and the audit outcome `rate_limited`.
+
+Each instance counts on its own for now, so with several replicas a caller can get up to the limit times the number of replicas. Shared counters are planned.
+
+## Metrics and traces
+
+`/metrics` serves Prometheus metrics with the names every mothership project shares: `airlock_requests_total`, `airlock_request_duration_seconds`, `airlock_inflight_requests`, `airlock_limited_total` and `airlock_events_dropped_total`, plus tool calls, backend state, auth failures and config reloads. No label carries a user, a key or tool arguments. `ops_listen_addr` moves `/metrics`, `/healthz` and `/readyz` to a port of their own.
+
+```yaml
+telemetry:
+  otlp_endpoint: http://collector:4318   # OTLP over HTTP
+  sample_ratio: 0.1
+```
+
+Each request, tool call and backend call gets a span, and backends receive a `traceparent` that continues the caller's trace.
 
 ## Roadmap
+
+**v0.2.0, released**
+- OIDC login with a cached JWKS and the protected resource metadata, `member` / `viewer` / `admin` roles
+- the admin API with OpenAPI: servers, tools, rules, API keys, role bindings, settings, profiles, check and audit
+- limits from shared profiles: `requests` and `tools.calls`, with `RateLimit` headers
+- Prometheus metrics with the shared names, OTLP traces
+- a bootstrap admin key on first start, `airlock bootstrap-key` and `airlock keys new`
 
 **v0.1.0, released**
 - stdio and Streamable HTTP backends, prefixed tool names, filtered tool lists
@@ -130,10 +209,11 @@ Resources in the file are written to the database at startup and whenever the fi
 - SQLite and Postgres with migrations, resources provisioned from the config file
 
 **Next**
-- OIDC login, `member` / `viewer` / `admin` roles
-- `airlock check`, rate limits
-- admin API with OpenAPI
-- Prometheus metrics, OTLP traces
+- limit counters shared across replicas
+- usage events as CloudEvents, and the `gateway`, `admin` and `worker` roles
+- encrypted secret values, personal API keys
+- usage, sessions and export in the admin API, testing a server before saving it
+- `airlock check` and `airlock tools` on the command line
 
 **After that**
 - prompts and resources through the gateway

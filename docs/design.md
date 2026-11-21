@@ -143,14 +143,15 @@ Public packages are the plugin surface. Everything else is under `internal/`.
 | `internal/provision` | Sync file-declared resources into the store |
 | `internal/runtime` | Build and swap the immutable snapshot when the revision changes |
 | `internal/gateway` | mcp-go server, catalog, router, session-to-identity binding |
-| `internal/admin` | Admin API handlers, generated from `api/openapi.yaml` |
+| `internal/admin` | Admin API handlers, checked against `api/openapi.yaml` by a test |
+| `internal/limits` | The shared profiles, profile resolution and the limiter |
 | `internal/secrets` | Encrypt and decrypt secret fields at rest |
 | `internal/httpx` | Listener, Origin check, request ID, health, readiness, metrics routes |
 | `auth` | `Authenticator` interface, `Identity` type, registry; built-ins in `auth/oidc`, `auth/apikey` |
 | `policy` | `Policy` interface, registry; built-in `policy/rules` |
 | `backend` | `Backend` interface, registry; built-ins in `backend/stdio`, `backend/streamable` |
 | `audit` | `Event` type, `Sink` interface, registry; built-ins `sql`, `stdout`, `file` |
-| `ratelimit` | `Limiter` interface, registry; built-in in-memory token bucket |
+| `ratelimit` | Rates and the counter `Store` interface; built-in in-memory GCRA store |
 | `telemetry` | Prometheus metrics, OTLP tracing setup |
 
 ### Plugin interfaces
@@ -226,10 +227,13 @@ type Sink interface {
 ```go
 package ratelimit
 
-type Limiter interface {
-    Allow(ctx context.Context, key string) (ok bool, retryAfter time.Duration)
+type Store interface {
+    Take(ctx context.Context, key string, r Rate, now time.Time) (Bucket, error)
+    Acquire(ctx context.Context, key string, limit int64) (ok bool, release func(), err error)
 }
 ```
+
+A Postgres or Valkey store behind this interface lets every replica share the counts.
 
 Plugin config arrives as JSON, whether it came from YAML or from the API, so a plugin is configured the same way in both places.
 
@@ -247,7 +251,8 @@ Plugin config arrives as JSON, whether it came from YAML or from the API, so a p
 |---|---|
 | `servers` | Backend definitions: name, transport, command/args/env or url/auth, timeouts, `required`, `enabled` |
 | `rules` | Policy rules: name, subjects, allow, deny |
-| `rate_limits` | Rate limit rules |
+| `profiles` | Limits profiles in the shared mothership format |
+| `profile_bindings` | Which key, user or group gets which profile |
 | `api_keys` | Name, owner (empty for service keys), SHA-256 hash, groups, created, expires, last used, revoked |
 | `role_bindings` | Admin API roles: subject pattern and role |
 | `settings` | Key-value settings, one row per top-level key of `settings` in the file: OIDC, allowed origins, audit options |
@@ -264,9 +269,11 @@ Every row in every table has `org_id`, `default` until organisations ship, and e
 
 Server `env` values and HTTP `headers` often hold tokens. A secret field is stored either as a `${VAR}` reference, resolved from airlock's environment when the backend starts, or as a literal encrypted with AES-256-GCM. The key comes from `AIRLOCK_SECRET_KEY`. With SQLite and no key set, airlock creates `airlock.key` next to the database on first start, so the quickstart needs no setup. With Postgres, a key must be set before literals are accepted, since replicas must share it. The admin API never returns a secret value. It returns `{"set": true}` instead, and a write that omits the field keeps the old value.
 
+Until encryption ships (planned for v0.3.0), the admin API accepts only `${VAR}` references in server `env` values and in header values whose name looks secret (`Authorization`, `Cookie`, or holding key, token, secret or auth), so the API never stores a secret. A reference is shown back as `{"ref": "${VAR}"}`, a header that cannot be secret as `{"value": "..."}`, and anything else as `{"set": true}`.
+
 ### Provisioning from YAML
 
-Resources declared in the config file (`servers`, `rules`, `rate_limits`, `api_keys`, `role_bindings`, `settings`) are written to the store at startup and whenever the file changes. They get `source: file`. Rows that disappear from the file are deleted, but only if they were `source: file`. The admin API refuses to change or delete them, with a 409 that says the resource is managed by the config file. Resources created through the API get `source: api` and the file never touches them. A name used by both sides is a validation error at load time.
+Resources declared in the config file (`servers`, `rules`, `profiles`, `profile_bindings`, `api_keys`, `role_bindings`, `settings`) are written to the store at startup and whenever the file changes. They get `source: file`. Rows that disappear from the file are deleted, but only if they were `source: file`. The admin API refuses to change or delete them, with a 409 that says the resource is managed by the config file. Resources created through the API get `source: api` and the file never touches them. A name used by both sides is a validation error at load time.
 
 ## Authentication
 
@@ -343,31 +350,29 @@ An admin can create stdio servers, which means running commands on the airlock h
 
 ## Admin API
 
-JSON under `/admin/v1/`, described by `api/openapi.yaml` (OpenAPI 3.0.3). The file is the source of truth: request and response types and the server interface are generated from it with `oapi-codegen` in its `net/http` mode, the generated code is committed, and CI fails if regenerating changes anything. The OpenAPI file is also served at `/admin/v1/openapi.yaml` so a console can read it.
+JSON under `/admin/v1/`, described by `api/openapi.yaml` (OpenAPI 3.1). The file is the source of truth. The handlers are written by hand, as in transponder, and a test checks that the served routes and the file match both ways and validates every response the tests get against the file's schemas. That keeps `oapi-codegen` and its runtime out of the build. The OpenAPI file is also served at `/admin/v1/openapi.yaml` so a console can read it.
 
 ### Endpoints
 
 | Method and path | Does |
 |---|---|
-| `GET /status` | Version, uptime, revision, storage driver, each backend's state and tool count |
+| `GET /status` | Version, uptime, revision, storage driver, the last reload, each backend's state and tool count |
 | `GET /servers`, `POST /servers` | List and add backends |
 | `GET /servers/{name}`, `PATCH /servers/{name}`, `DELETE /servers/{name}` | Read, change, remove a backend |
-| `POST /servers/{name}/restart` | Restart a backend |
-| `POST /servers/test` | Try a server definition without saving it: connect, list tools, report errors |
 | `GET /tools` | The full catalog with prefixed names, filterable by `server` |
 | `GET /rules`, `POST /rules`, `GET/PATCH/DELETE /rules/{name}` | Tool rules |
-| `GET /rate-limits`, `POST /rate-limits`, `GET/PATCH/DELETE /rate-limits/{name}` | Rate limit rules |
-| `GET /api-keys`, `POST /api-keys`, `GET/PATCH /api-keys/{name}`, `POST /api-keys/{name}/revoke` | Service API keys. The key value is only in the `POST` response |
-| `GET /role-bindings`, `POST /role-bindings`, `DELETE /role-bindings/{id}` | Admin roles |
-| `GET /project-bindings`, `POST /project-bindings`, `DELETE /project-bindings/{id}` | Which `X-Project` value airlock sets for a caller |
-| `GET /me`, `GET /me/tools` | The caller's identity and visible tools |
-| `GET /me/api-keys`, `POST /me/api-keys`, `POST /me/api-keys/{name}/revoke` | The caller's personal API keys |
-| `GET /settings`, `PATCH /settings` | OIDC, allowed origins, audit options |
-| `POST /check` | Decisions for a subject, groups and a list of tools (or every tool), with the deciding rule |
-| `GET /audit` | Audit records, newest first, filterable by `subject`, `server`, `tool`, `outcome`, `since`, `until` |
-| `GET /usage` | Call counts, error counts and latency, grouped by `subject`, `server` or `tool` over a time range |
-| `GET /sessions` | Live MCP sessions on this instance: subject, client name, started, last seen |
-| `GET /export` | Every `source: api` resource as YAML, ready to move into the config file |
+| `GET /profiles`, `POST /profiles`, `GET/PATCH/DELETE /profiles/{name}` | Limits profiles |
+| `GET /profile-bindings`, `POST /profile-bindings`, `GET/PATCH/DELETE /profile-bindings/{name}` | Which subject gets which profile |
+| `GET /api-keys`, `POST /api-keys`, `GET/PATCH/DELETE /api-keys/{name}`, `POST /api-keys/{name}/revoke` | Service API keys. The key value is only in the `POST` response |
+| `GET /role-bindings`, `POST /role-bindings`, `GET/PATCH/DELETE /role-bindings/{name}` | Admin roles |
+| `GET /me`, `GET /me/tools` | The caller's identity, role, profile and visible tools |
+| `GET /settings`, `PATCH /settings` | Allowed origins, the public URL, OIDC, the default and org profiles |
+| `POST /check` | Decisions for a user or key, groups and a list of tools (or every tool), with the deciding rule |
+| `GET /audit` | Audit records, newest first, filterable by `kind`, `subject`, `server`, `tool`, `outcome`, `since`, `until` |
+
+Planned for v0.3.0: `POST /servers/{name}/restart`, `POST /servers/test`, project bindings, personal keys under `/me/api-keys`, `GET /usage`, `GET /sessions`, `GET /export` and `GET /limits/{subject}`.
+
+Settings are one row per top-level key. Their `version` is the sum of the row versions, so it grows with every write, and a key set in the file is read-only.
 
 `POST /servers/test` and `POST /check` are there so a console can offer "test connection" and "who can see what" screens without guessing.
 
@@ -407,25 +412,29 @@ JSON under `/admin/v1/`, described by `api/openapi.yaml` (OpenAPI 3.0.3). The fi
 - `call_timeout` per backend, default 60s. Client cancellation cancels the backend call through the context.
 - `enabled: false` keeps a server's definition but stops it and removes its tools.
 
-## Rate limits
+## Limits
+
+Limits come from the profiles of the mothership contract (`docs/scale.md` in mothership), so one profiles list works for all four projects. airlock owns the `tools.` keys and shares `requests`, and ignores `llm.`, `agent.` and `memory.` keys.
 
 ```yaml
-rate_limits:
+profiles:
   - name: interns
-    subjects: ["group:interns"]
-    tools: ["*"]
-    rate: 30/m
-    burst: 10
-  - name: github-writes
-    subjects: ["*"]
-    tools: ["github__create_*"]
-    rate: 60/h
+    limits:
+      requests: {rate: 120/m, concurrency: 8}
+      tools.calls: {rate: 30/m, concurrency: 2}
+profile_bindings:
+  - {name: interns, subject: "group:interns", profile: interns}
+settings:
+  default_profile: interns
+  org_profile: org
 ```
 
-- Each rule keeps a token bucket per caller subject. A call has to pass every rule that matches it.
-- Rates are written `N/s`, `N/m` or `N/h`. `burst` defaults to N.
-- An over-limit call returns a tool result with `isError: true` and text such as `rate limit "interns" exceeded, retry in 12s`, so the model can see what happened. The audit outcome is `rate_limited`.
-- The built-in limiter is in memory, so with several replicas each one counts on its own. A Postgres or Redis limiter is a natural plugin.
+- Rates are `N/s`, `N/m`, `N/h` or `N/d`, counted with GCRA, so the bucket holds N.
+- The most specific binding wins and its profile applies whole: the key, the user, a group in the order the token lists them, the token's `profile_claim` (`tier` by default), then `default_profile`. A call must also pass `org_profile`.
+- `requests` applies to every HTTP request on `/mcp` and `/admin/v1/`, after sign-in. Over it is 429 `rate_limited` with `Retry-After`, or 429 `concurrency_limited`. Every answer carries `RateLimit-Policy` and `RateLimit`.
+- `tools.calls` applies to every tool call, after the policy. Over it is a tool result with `isError: true` and text such as `rate_limited: tools.calls allows 30/m for user:alice; retry in 12s`, and the audit outcome `rate_limited`. A tool call is one JSON-RPC message inside an HTTP request, and an MCP client treats a 429 there as a broken transport, while a model can read a tool error and wait.
+- `limits.max_inflight` caps the requests one instance serves at once; past it is 503 `overloaded`.
+- v0.2.0 counts in memory, so with several replicas each counts on its own and a caller can get up to the limit times the number of replicas. Shared counters (`sql`, then `valkey`) are planned for v0.3.0 behind `ratelimit.Store`.
 
 ## Audit log
 
@@ -494,18 +503,17 @@ rules:
     allow: ["*"]
     deny: ["github__delete_*"]
 
-rate_limits:
+profiles:
   - name: default
-    subjects: ["*"]
-    tools: ["*"]
-    rate: 120/m
+    limits:
+      tools.calls: {rate: 120/m}
 ```
 
 - `--config` points at the file. Without it, airlock runs on defaults (SQLite in the working directory, bootstrap key on first start), which is the zero-setup quickstart.
 - `${VAR}` in a string value is resolved from the environment. In process settings this happens at load time. In provisioned resources the reference itself is stored and resolved when the backend starts, so the secret never lands in the database.
 - Any scalar key can be overridden by an environment variable: `AIRLOCK_` plus the key path in upper case, with `__` between levels. `AIRLOCK_LISTEN_ADDR` sets `listen_addr` and `AIRLOCK_STORAGE__DSN` sets `storage.dsn`. Lists cannot be overridden this way.
 - Unknown keys are an error, so typos fail loudly.
-- airlock checks the file's modification time every 2 seconds (this works the same on Windows, Linux and macOS) and also reloads on SIGHUP where that exists. A new file is fully validated before it is provisioned. If it is invalid, nothing changes, the error is logged, and `airlock_config_reload_errors_total` goes up. Process settings such as `listen_addr` and `storage` need a restart, and airlock logs a warning when they change.
+- airlock checks the file's modification time every 2 seconds (this works the same on Windows, Linux and macOS) and also reloads on SIGHUP where that exists. A new file is fully validated before it is provisioned. If it is invalid, nothing changes and the error is logged. A change in the store that fails to load keeps the old snapshot, shows in `GET /admin/v1/status` and counts in `airlock_config_reloads_total{result="failed"}`. Process settings such as `listen_addr` and `storage` need a restart, and airlock logs a warning when they change.
 
 ## Running several replicas
 
@@ -517,8 +525,9 @@ With Postgres, any number of airlock instances can share one database. Config ch
 - `/admin/v1/`: the admin API.
 - `/healthz`: 200 when the process is up.
 - `/readyz`: 200 when the store is reachable, migrations are current, and every backend marked `required: true` is connected. The body is JSON with each check's status. `required` defaults to false, so one broken optional backend does not take the gateway out of a load balancer.
-- `/metrics`: Prometheus. Main series: `airlock_tool_calls_total{server,tool,outcome}`, `airlock_tool_call_duration_seconds{server}`, `airlock_backend_up{server}`, `airlock_auth_failures_total{method,reason}`, `airlock_admin_requests_total{route,code}`, `airlock_audit_dropped_total`, `airlock_config_reload_errors_total`, `airlock_revision`.
-- Traces over OTLP when `telemetry.otlp_endpoint` is set: one span per `tools/call` with a child span for the backend call, and one span per admin request.
+- `/metrics`: Prometheus. The shared series are `airlock_requests_total{route,code}`, `airlock_request_duration_seconds{route}`, `airlock_inflight_requests`, `airlock_limited_total{reason}` and `airlock_events_dropped_total{sink}`, where `route` is the route pattern and `sink` is `audit` or `otlp`. airlock adds `airlock_tool_calls_total{server,tool,outcome}`, `airlock_tool_call_duration_seconds{server}`, `airlock_backend_up{server}`, `airlock_auth_failures_total{method,reason}`, `airlock_config_reloads_total{result}`, `airlock_revision` and `airlock_build_info{version}`. Server and tool labels are only names in the catalog, anything else is `other`.
+- `ops_listen_addr` moves `/metrics`, `/healthz` and `/readyz` to their own port.
+- Traces over OTLP/HTTP when `telemetry.otlp_endpoint` is set: a server span per HTTP request, a span per `tools/call` under it, and a client span for the backend call whose `traceparent` the backend receives. The exporter is hand-written JSON over HTTP, as in transponder, so the build has no OpenTelemetry SDK.
 - Logs: JSON on stdout through `log/slog`.
 - Default `listen_addr` is `127.0.0.1:8080`. The Docker image sets `0.0.0.0:8080` and keeps the SQLite file in a `/data` volume.
 
@@ -608,7 +617,10 @@ The repository root carries the shared files from `mothership/contributing/`: CO
 
 23. Every table has `org_id`, `default` for now, and every query filters by it.
 24. `X-Project` is set per caller through project bindings, or passed through from the client.
-25. Admins may add stdio servers through the API. `stdio.allowed_commands` in the file limits what can run, and the docs say the `admin` role is as strong as a shell on the host.
+25. Admins may add stdio servers through the API. `stdio.allowed_commands` in the file limits what can run, and the docs say the `admin` role is as strong as a shell on the host. With the list set, the API also refuses `dir`, `..` in the command and env variables that change which code a program loads.
+26. Limits come from the shared mothership profiles instead of per-tool rate limit rules. A refused tool call is a tool error, a refused HTTP request a 429.
+27. The admin API handlers are hand-written and checked against `api/openapi.yaml` by a test, instead of generated.
+28. Metrics and the OTLP exporter are hand-written, with the shared metric names, so the build pulls in neither the Prometheus client nor the OpenTelemetry SDK.
 
 ## Later
 
@@ -620,3 +632,12 @@ Settled for v1 by leaving them out, and planned after it:
 4. **Sampling and elicitation passthrough.** Routing a backend's request back to the right client session, once a real backend needs it.
 5. **Shared MCP sessions across replicas.** Session state in Postgres, so replicas no longer need sticky sessions.
 6. **Organisations.** The `org_id` column is already there. Turning it on adds org-scoped roles and an org claim mapping.
+
+Planned for v0.3.0, moved out of the v0.2.0 plan (`docs/plans/2026-11-21-v0.2.0-teams.md`):
+
+- limit counters shared across replicas, and daily and monthly quotas (402 `quota_exceeded`)
+- CloudEvents usage events (`dev.mothership.airlock.tool.called.v1`) with an outbox, and the `roles` flag
+- encrypted secret literals, personal API keys
+- the admin API endpoints listed under Endpoints, and `profiles_file`
+- `airlock check`, `airlock tools` and `airlock validate`
+- pinning the arguments of commands in `stdio.allowed_commands`, which today limits the program but not its arguments
