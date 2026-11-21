@@ -1,0 +1,1310 @@
+openapi: 3.1.0
+info:
+  title: airlock admin API
+  version: v1
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  description: |
+    The JSON admin API of airlock, under /admin/v1/. It follows the admin API rules of the
+    mothership contract.
+
+    - Callers sign in as on `/mcp`: `Authorization: Bearer <API key or OIDC token>`. Access comes
+      from role bindings. `member` may read `/me`, `/me/tools` and its own `/audit` records;
+      `viewer` may call every GET and `POST /check`; every other write needs `admin`.
+    - Lists take `cursor` and `limit` (default 50, at most 500) and return
+      `{"items": [...], "next_cursor": "..."}`. `next_cursor` is absent on the last page.
+    - Errors are `{"error": {"code": "...", "message": "...", "field": "..."}}`. A validation
+      error names the field.
+    - Every resource has an integer `version`, also sent as the `ETag` of a single read.
+      PATCH, DELETE and revoke take it in `If-Match`; a mismatch is 409 `version_conflict`.
+      Without `If-Match` the write applies to whatever version is stored.
+    - PATCH bodies are JSON merge patches (RFC 7396).
+    - Items declared in the YAML file are read-only here and marked `managed_by_file`; a write
+      to one is 409 `managed_by_file`.
+    - Every write is checked against the whole config as it would be, stored with its audit
+      record in one transaction, and live on this instance before the answer. Other instances
+      pick it up within 2 seconds.
+servers:
+  - url: /admin/v1
+security:
+  - bearer: []
+
+paths:
+  /openapi.yaml:
+    get:
+      operationId: getOpenAPI
+      summary: This file.
+      responses:
+        "200":
+          description: The OpenAPI description of the admin API.
+          content:
+            application/yaml:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /status:
+    get:
+      operationId: getStatus
+      summary: Version, uptime, revision, storage, the last reload and every backend.
+      responses:
+        "200":
+          description: The status of this instance.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /tools:
+    get:
+      operationId: listTools
+      summary: The whole catalog with prefixed names, sorted by name.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: server
+          in: query
+          description: Only the tools of this server.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of tools.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Tool" }
+                  next_cursor: { type: string }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /servers:
+    get:
+      operationId: listServers
+      summary: Backend MCP servers, sorted by name. Secret values are never returned.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of servers.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Server" }
+                  next_cursor: { type: string }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createServer
+      summary: |
+        Add a server. Values of `env`, and of headers whose name looks secret (Authorization,
+        Cookie, or holding key, token, secret or auth), must be `${VAR}` references, resolved
+        from airlock's environment when the server starts. A stdio command must match
+        `stdio.allowed_commands` when the file sets it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServerWrite" }
+      responses:
+        "201":
+          description: The new server.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Server" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+
+  /servers/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getServer
+      summary: One server, with its current state.
+      responses:
+        "200":
+          description: The server.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Server" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateServer
+      summary: Change a server. The name cannot change.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { type: object }
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: The changed server.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Server" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+    delete:
+      operationId: deleteServer
+      summary: Remove a server. Its tools leave the catalog.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204": { description: Removed. }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /rules:
+    get:
+      operationId: listRules
+      summary: Tool rules, sorted by name.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of rules.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Rule" }
+                  next_cursor: { type: string }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createRule
+      summary: Add a rule. Deny wins over allow, and no rule means deny.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RuleWrite" }
+      responses:
+        "201":
+          description: The new rule.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Rule" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+
+  /rules/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getRule
+      summary: One rule.
+      responses:
+        "200":
+          description: The rule.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Rule" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateRule
+      summary: Change a rule. The name cannot change.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { type: object }
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: The changed rule.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Rule" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+    delete:
+      operationId: deleteRule
+      summary: Remove a rule.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204": { description: Removed. }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /role-bindings:
+    get:
+      operationId: listRoleBindings
+      summary: Admin API role bindings, sorted by name.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of role bindings.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/RoleBinding" }
+                  next_cursor: { type: string }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createRoleBinding
+      summary: Give the matching subjects a role.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoleBindingWrite" }
+      responses:
+        "201":
+          description: The new binding.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoleBinding" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+
+  /role-bindings/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getRoleBinding
+      summary: One role binding.
+      responses:
+        "200":
+          description: The binding.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoleBinding" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateRoleBinding
+      summary: Change a role binding. The name cannot change.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { type: object }
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: The changed binding.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoleBinding" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+    delete:
+      operationId: deleteRoleBinding
+      summary: Remove a role binding.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204": { description: Removed. }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /profiles:
+    get:
+      operationId: listProfiles
+      summary: Limits profiles in the shared mothership format, sorted by name.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of profiles.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Profile" }
+                  next_cursor: { type: string }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createProfile
+      summary: |
+        Add a profile. airlock enforces `requests` and `tools.calls` (each a `rate` such as
+        `30/m` and a `concurrency`) and ignores the keys of the other projects.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProfileWrite" }
+      responses:
+        "201":
+          description: The new profile.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+
+  /profiles/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getProfile
+      summary: One profile.
+      responses:
+        "200":
+          description: The profile.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateProfile
+      summary: Change a profile. The name cannot change.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { type: object }
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: The changed profile.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+    delete:
+      operationId: deleteProfile
+      summary: Remove a profile. A profile still named by a binding or a setting cannot go.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204": { description: Removed. }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /profile-bindings:
+    get:
+      operationId: listProfileBindings
+      summary: Which key, user or group gets which profile, sorted by name.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of profile bindings.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ProfileBinding" }
+                  next_cursor: { type: string }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createProfileBinding
+      summary: Give a subject a profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProfileBindingWrite" }
+      responses:
+        "201":
+          description: The new binding.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfileBinding" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+
+  /profile-bindings/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getProfileBinding
+      summary: One profile binding.
+      responses:
+        "200":
+          description: The binding.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfileBinding" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateProfileBinding
+      summary: Change a profile binding. The name cannot change.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { type: object }
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: The changed binding.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfileBinding" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+    delete:
+      operationId: deleteProfileBinding
+      summary: Remove a profile binding.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204": { description: Removed. }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api-keys:
+    get:
+      operationId: listAPIKeys
+      summary: Service API keys, sorted by name. Neither the key nor its hash is returned.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/APIKey" }
+                  next_cursor: { type: string }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createAPIKey
+      summary: Make a key. Its subject is `key:<name>`. The key is in this answer only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/APIKeyWrite" }
+      responses:
+        "201":
+          description: The new key, with its value.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIKeyCreated" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+
+  /api-keys/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getAPIKey
+      summary: One key.
+      responses:
+        "200":
+          description: The key.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIKey" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateAPIKey
+      summary: Change a key's groups or expiry.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { type: object }
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: The changed key.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIKey" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+    delete:
+      operationId: deleteAPIKey
+      summary: Remove a key.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204": { description: Removed. }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api-keys/{name}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    post:
+      operationId: revokeAPIKey
+      summary: Stop a key from working, keeping its record.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The revoked key.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIKey" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /settings:
+    get:
+      operationId: getSettings
+      summary: Allowed origins, the public URL, OIDC and the default and org profiles.
+      responses:
+        "200":
+          description: The settings.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    patch:
+      operationId: updateSettings
+      summary: |
+        Change settings with a merge patch; `null` clears a key. A key set in the YAML file
+        cannot change here.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { type: object }
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: The changed settings.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "400": { $ref: "#/components/responses/InvalidWrite" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+
+  /me:
+    get:
+      operationId: getMe
+      summary: The caller's identity, role and profile.
+      responses:
+        "200":
+          description: The caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /me/tools:
+    get:
+      operationId: listMyTools
+      summary: The tools the caller sees on /mcp, with the rule that allows each.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of tools.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Decision" }
+                  next_cursor: { type: string }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /check:
+    post:
+      operationId: check
+      summary: |
+        The decision for a caller on each named tool, or on every tool in the catalog, with the
+        rule that decided it. Nothing is called.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CheckRequest" }
+      responses:
+        "200":
+          description: One decision per tool.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Decision" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+
+  /audit:
+    get:
+      operationId: listAudit
+      summary: |
+        Audit records, newest first: every tool call, denied and limited ones included, and
+        every admin write. A member sees only their own.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - { name: kind, in: query, schema: { type: string, enum: [tool, admin] } }
+        - { name: subject, in: query, schema: { type: string } }
+        - { name: server, in: query, schema: { type: string } }
+        - { name: tool, in: query, description: The tool name without the server prefix., schema: { type: string } }
+        - { name: outcome, in: query, schema: { type: string } }
+        - { name: since, in: query, description: Start, inclusive, RFC 3339., schema: { type: string } }
+        - { name: until, in: query, description: End, exclusive, RFC 3339., schema: { type: string } }
+      responses:
+        "200":
+          description: A page of records.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditRecord" }
+                  next_cursor: { type: string }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: An API key (`alk_...`) or an OIDC token from the configured issuer.
+
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: The `next_cursor` of the previous page. Opaque.
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+    IfMatch:
+      name: If-Match
+      in: header
+      description: The version the change is based on, such as `"3"`.
+      schema: { type: string }
+    Name:
+      name: name
+      in: path
+      required: true
+      schema: { type: string }
+
+  headers:
+    ETag:
+      description: The resource version, quoted, for If-Match.
+      schema: { type: string }
+
+  responses:
+    Invalid:
+      description: The request is not valid. `field` names the parameter or body field.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InvalidWrite:
+      description: |
+        `invalid` names the field that is not valid. `invalid_config` means the change is
+        valid on its own but the whole config would not load with it, such as a binding to a
+        profile that does not exist; nothing was written.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthenticated:
+      description: No valid API key or token.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: The caller's role does not allow this.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: No such resource.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: |
+        `version_conflict` when If-Match names another version, `managed_by_file` when the item
+        comes from the YAML file, `already_exists` when the name is taken.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooLarge:
+      description: The body is larger than 1 MiB.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            field: { type: string }
+
+    Status:
+      type: object
+      additionalProperties: false
+      required: [version, instance, started_at, uptime_seconds, revision, storage, reload, backends]
+      properties:
+        version: { type: string }
+        instance: { type: string }
+        started_at: { type: string, format: date-time }
+        uptime_seconds: { type: integer }
+        revision:
+          type: integer
+          description: The store revision the running config was built from.
+        storage: { type: string, enum: [sqlite, postgres] }
+        reload:
+          type: object
+          additionalProperties: false
+          properties:
+            at: { type: string, format: date-time }
+            error:
+              type: string
+              description: Why the last reload failed. The previous config keeps serving.
+        backends:
+          type: array
+          items: { $ref: "#/components/schemas/BackendStatus" }
+
+    BackendStatus:
+      type: object
+      additionalProperties: false
+      required: [name, state, tools]
+      properties:
+        name: { type: string }
+        state: { type: string, enum: [starting, up, down, stopped] }
+        error: { type: string }
+        tools: { type: integer }
+        since: { type: string, format: date-time }
+        stderr:
+          type: array
+          description: The last lines a stdio server wrote to stderr.
+          items: { type: string }
+
+    Tool:
+      type: object
+      additionalProperties: false
+      required: [name, server, tool]
+      properties:
+        name: { type: string, description: "The prefixed name, <server>__<tool>." }
+        server: { type: string }
+        tool: { type: string }
+        description: { type: string }
+
+    SecretValue:
+      type: object
+      additionalProperties: false
+      description: |
+        A value that may hold a secret. `ref` is a `${VAR}` reference, `set` stands for a
+        literal that is never shown, and `value` is a literal that is not secret.
+      properties:
+        ref: { type: string }
+        set: { type: boolean }
+        value: { type: string }
+
+    ServerWrite:
+      type: object
+      additionalProperties: false
+      required: [name, transport]
+      properties:
+        name: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,31}$" }
+        transport: { type: string, enum: [stdio, streamable_http] }
+        command: { type: string }
+        args: { type: array, items: { type: string } }
+        env: { type: object, additionalProperties: { type: string } }
+        dir: { type: string }
+        url: { type: string }
+        auth:
+          type: object
+          additionalProperties: false
+          properties:
+            mode: { type: string, enum: [none, static, forward] }
+            headers: { type: object, additionalProperties: { type: string } }
+            discovery_headers: { type: object, additionalProperties: { type: string } }
+            session_idle_timeout: { type: string, description: A Go duration such as 10m. }
+            max_sessions: { type: integer }
+        call_timeout: { type: string, description: A Go duration such as 60s. }
+        required: { type: boolean }
+
+    Server:
+      type: object
+      additionalProperties: false
+      required: [name, transport, version, source, managed_by_file, created_at, updated_at]
+      properties:
+        name: { type: string }
+        transport: { type: string, enum: [stdio, streamable_http] }
+        command: { type: string }
+        args: { type: array, items: { type: string } }
+        env: { type: object, additionalProperties: { $ref: "#/components/schemas/SecretValue" } }
+        dir: { type: string }
+        url: { type: string }
+        auth:
+          type: object
+          additionalProperties: false
+          properties:
+            mode: { type: string, enum: [none, static, forward] }
+            headers: { type: object, additionalProperties: { $ref: "#/components/schemas/SecretValue" } }
+            discovery_headers: { type: object, additionalProperties: { $ref: "#/components/schemas/SecretValue" } }
+            session_idle_timeout: { type: string }
+            max_sessions: { type: integer }
+        call_timeout: { type: string }
+        required: { type: boolean }
+        status: { $ref: "#/components/schemas/BackendStatus" }
+        version: { type: integer }
+        source: { type: string, enum: [file, api] }
+        managed_by_file: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    RuleWrite:
+      type: object
+      additionalProperties: false
+      required: [name, subjects]
+      properties:
+        name: { type: string }
+        subjects:
+          type: array
+          description: "user:<subject>, group:<name>, key:<name>, or * for any caller."
+          items: { type: string }
+        allow:
+          type: array
+          description: Tool name patterns, where * matches any run of characters.
+          items: { type: string }
+        deny: { type: array, items: { type: string } }
+
+    Rule:
+      type: object
+      additionalProperties: false
+      required: [name, subjects, version, source, managed_by_file, created_at, updated_at]
+      properties:
+        name: { type: string }
+        subjects: { type: array, items: { type: string } }
+        allow: { type: array, items: { type: string } }
+        deny: { type: array, items: { type: string } }
+        version: { type: integer }
+        source: { type: string, enum: [file, api] }
+        managed_by_file: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    RoleBindingWrite:
+      type: object
+      additionalProperties: false
+      required: [name, subjects, role]
+      properties:
+        name: { type: string }
+        subjects: { type: array, items: { type: string } }
+        role: { type: string, enum: [admin, member, viewer] }
+
+    RoleBinding:
+      type: object
+      additionalProperties: false
+      required: [name, subjects, role, version, source, managed_by_file, created_at, updated_at]
+      properties:
+        name: { type: string }
+        subjects: { type: array, items: { type: string } }
+        role: { type: string, enum: [admin, member, viewer] }
+        version: { type: integer }
+        source: { type: string, enum: [file, api] }
+        managed_by_file: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProfileWrite:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string }
+        priority: { type: integer }
+        limits:
+          type: object
+          description: 'Limit keys such as {"tools.calls": {"rate": "30/m", "concurrency": 2}}.'
+          additionalProperties: true
+
+    Profile:
+      type: object
+      additionalProperties: false
+      required: [name, version, source, managed_by_file, created_at, updated_at]
+      properties:
+        name: { type: string }
+        priority: { type: integer }
+        limits: { type: object, additionalProperties: true }
+        version: { type: integer }
+        source: { type: string, enum: [file, api] }
+        managed_by_file: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProfileBindingWrite:
+      type: object
+      additionalProperties: false
+      required: [name, subject, profile]
+      properties:
+        name: { type: string }
+        subject: { type: string, description: "key:<name>, user:<subject> or group:<name>." }
+        profile: { type: string }
+
+    ProfileBinding:
+      type: object
+      additionalProperties: false
+      required: [name, subject, profile, version, source, managed_by_file, created_at, updated_at]
+      properties:
+        name: { type: string }
+        subject: { type: string }
+        profile: { type: string }
+        version: { type: integer }
+        source: { type: string, enum: [file, api] }
+        managed_by_file: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    APIKeyWrite:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string }
+        groups: { type: array, items: { type: string } }
+        expires_at: { type: [string, "null"], format: date-time }
+
+    APIKey:
+      type: object
+      additionalProperties: false
+      required: [name, revoked, version, source, managed_by_file, created_at, updated_at]
+      properties:
+        name: { type: string }
+        groups: { type: array, items: { type: string } }
+        expires_at: { type: [string, "null"], format: date-time }
+        revoked: { type: boolean }
+        version: { type: integer }
+        source: { type: string, enum: [file, api] }
+        managed_by_file: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    APIKeyCreated:
+      type: object
+      additionalProperties: false
+      required: [name, key, revoked, version, source, managed_by_file, created_at, updated_at]
+      properties:
+        name: { type: string }
+        key: { type: string, description: The key. It is shown only here. }
+        groups: { type: array, items: { type: string } }
+        expires_at: { type: [string, "null"], format: date-time }
+        revoked: { type: boolean }
+        version: { type: integer }
+        source: { type: string, enum: [file, api] }
+        managed_by_file: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    OIDC:
+      type: object
+      additionalProperties: false
+      required: [issuer, audience]
+      properties:
+        issuer: { type: string }
+        audience: { type: string }
+        jwks_url: { type: string }
+        subject_claim: { type: string, description: The claim that holds the subject. Defaults to sub. }
+        groups_claim: { type: string, description: "The claim that holds the groups, a dotted path allowed. Defaults to groups." }
+        profile_claim: { type: string, description: The claim that names a limits profile. Defaults to tier. }
+
+    Settings:
+      type: object
+      additionalProperties: false
+      required: [version, managed_by_file, managed_keys]
+      properties:
+        allowed_origins: { type: array, items: { type: string } }
+        public_url: { type: string }
+        oidc: { $ref: "#/components/schemas/OIDC" }
+        default_profile: { type: string }
+        org_profile: { type: string }
+        version: { type: integer }
+        managed_by_file:
+          type: boolean
+          description: True when any key is set in the YAML file.
+        managed_keys:
+          type: array
+          description: The keys set in the YAML file, which cannot change here.
+          items: { type: string }
+
+    Me:
+      type: object
+      additionalProperties: false
+      required: [subject, method, role]
+      properties:
+        subject: { type: string }
+        groups: { type: array, items: { type: string } }
+        method: { type: string }
+        role: { type: string, enum: [admin, member, viewer] }
+        profile: { type: string, description: The limits profile that applies, absent for none. }
+
+    CheckRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        user: { type: string, description: The subject of a signed-in user. }
+        key: { type: string, description: An API key name. Set user or key. }
+        groups: { type: array, items: { type: string } }
+        tools:
+          type: array
+          description: Prefixed tool names. Empty means every tool in the catalog.
+          items: { type: string }
+
+    Decision:
+      type: object
+      additionalProperties: false
+      required: [tool, allow, rule, reason]
+      properties:
+        tool: { type: string }
+        allow: { type: boolean }
+        rule: { type: string }
+        reason: { type: string }
+
+    AuditRecord:
+      type: object
+      additionalProperties: false
+      required: [id, time, kind, duration_ms]
+      properties:
+        id: { type: integer }
+        time: { type: string, format: date-time }
+        kind: { type: string, enum: [tool, admin] }
+        action: { type: string }
+        resource: { type: string }
+        route: { type: string }
+        request_id: { type: string }
+        trace_id: { type: string }
+        session_id: { type: string }
+        instance: { type: string }
+        subject: { type: string }
+        groups: { type: array, items: { type: string } }
+        auth: { type: string }
+        project: { type: string }
+        server: { type: string }
+        tool: { type: string }
+        decision: { type: string }
+        rule: { type: string }
+        outcome: { type: string }
+        duration_ms: { type: integer }
+        args: { type: object, additionalProperties: true }
+        error: { type: string }
