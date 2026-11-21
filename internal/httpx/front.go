@@ -49,11 +49,18 @@ func Front(o FrontOptions, next http.Handler) http.Handler {
 		span := o.Tracer.Start(r.Method+" "+r.URL.Path, telemetry.SpanServer, r.Header.Get("Traceparent"), r.Header.Get("Tracestate"))
 		rec := &recorder{ResponseWriter: w, code: http.StatusOK}
 		o.Metrics.Inflight(1)
+		// routed is the request next gets. A mux inside next, such as the admin API's, sets
+		// the more specific pattern on it.
+		routed := r
 		defer func() {
+			pattern := routed.Pattern
+			if pattern == "" {
+				pattern = r.Pattern
+			}
 			o.Metrics.Inflight(-1)
-			o.Metrics.Request(r.Pattern, rec.code, time.Since(start))
-			if r.Pattern != "" {
-				span.SetName(r.Pattern)
+			o.Metrics.Request(pattern, rec.code, time.Since(start))
+			if pattern != "" {
+				span.SetName(pattern)
 			}
 			span.SetInt("http.response.status_code", int64(rec.code))
 			if rec.code >= 500 {
@@ -88,10 +95,21 @@ func Front(o FrontOptions, next http.Handler) http.Handler {
 			WriteError(rec, denied.Status, denied.Code, denied.Message)
 			return
 		}
-		defer ticket.Release()
 		ticket.SetHeaders(rec.Header())
-		next.ServeHTTP(rec, r.WithContext(auth.WithIdentity(ctx, id)))
+		// A listen stream stays open for as long as the client likes, so it counts against
+		// the rate but does not hold a concurrency slot.
+		if isStream(r) {
+			ticket.Release()
+		} else {
+			defer ticket.Release()
+		}
+		routed = r.WithContext(auth.WithIdentity(ctx, id))
+		next.ServeHTTP(rec, routed)
 	})
+}
+
+func isStream(r *http.Request) bool {
+	return r.Method == http.MethodGet && strings.Contains(r.Header.Get("Accept"), "text/event-stream")
 }
 
 func refuse(w http.ResponseWriter, r *http.Request, snap *runtime.Snapshot, m *telemetry.Metrics, log *slog.Logger, err error) {

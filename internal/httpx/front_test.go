@@ -230,6 +230,57 @@ func TestFrontMaxInflight(t *testing.T) {
 	}
 }
 
+func TestFrontStreamHoldsNoSlot(t *testing.T) {
+	h := holder(t, func(c *config.Config) {
+		c.Profiles = []limits.Spec{{Name: "p", Limits: map[string]any{"requests": map[string]any{"concurrency": 1}}}}
+		c.Settings.DefaultProfile = "p"
+	})
+	opened, closeStream := make(chan struct{}), make(chan struct{})
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", Front(FrontOptions{Runtime: h}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			close(opened)
+			<-closeStream
+			return
+		}
+		w.WriteHeader(http.StatusTeapot)
+	})))
+	send := func(method, accept string) int {
+		req := httptest.NewRequestWithContext(context.Background(), method, "/mcp", nil)
+		req.Header.Set("Authorization", "Bearer "+testKey)
+		req.Header.Set("Accept", accept)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		return w.Code
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		send(http.MethodGet, "text/event-stream")
+	}()
+	<-opened
+	code := send(http.MethodPost, "application/json")
+	close(closeStream)
+	<-done
+	if code != http.StatusTeapot {
+		t.Fatalf("a POST beside an open stream got %d", code)
+	}
+}
+
+func TestFrontInnerPattern(t *testing.T) {
+	inner := http.NewServeMux()
+	inner.HandleFunc("GET /admin/v1/rules/{name}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	m := telemetry.NewMetrics("test")
+	outer := http.NewServeMux()
+	outer.Handle("/admin/v1/", Front(FrontOptions{Runtime: holder(t, nil), Metrics: m}, inner))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/v1/rules/eng", nil)
+	req.Header.Set("Authorization", "Bearer "+testKey)
+	outer.ServeHTTP(httptest.NewRecorder(), req)
+	if out := scrape(t, m); !strings.Contains(out, `airlock_requests_total{route="GET /admin/v1/rules/{name}",code="418"} 1`) {
+		t.Fatalf("metrics\n%s", out)
+	}
+}
+
 func TestFrontSpan(t *testing.T) {
 	r := newRig(t, holder(t, nil), nil, nil)
 	parent := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
