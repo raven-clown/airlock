@@ -6,7 +6,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Added
 
-- OIDC sign-in from any provider through discovery and a cached JWKS, set in `settings.oidc` (`issuer`, `audience`, `jwks_url`, `subject_claim`, `groups_claim`, `profile_claim`). A 401 points MCP clients at `/.well-known/oauth-protected-resource`, and an issuer that cannot be reached answers 503 `auth_unavailable`.
+- OIDC sign-in from any provider through discovery and a cached JWKS, set in `settings.oidc` (`issuer`, `audience`, `jwks_url`, `subject_claim`, `groups_claim`, `profile_claim`). A 401 points MCP clients at `/.well-known/oauth-protected-resource`, and an issuer that cannot be reached answers 503 `auth_unavailable`. The issuer and its keys must be served over https, or plain http on a loopback address.
 - The `admin`, `viewer` and `member` roles from `role_bindings`.
 - The admin API under `/admin/v1/`, described in `api/openapi.yaml` and served at `/admin/v1/openapi.yaml`: status, tools, servers, rules, API keys (with revoke), role bindings, settings, profiles, profile bindings, `/me`, `/me/tools`, `/check` and `/audit` with filters. Lists page with `cursor` and `limit`, writes take `If-Match`, PATCH is a JSON merge patch, items from the file are read-only, and every write is checked against the whole config, stored with its audit record and live on that instance before the answer. Server `env` values and secret-looking header values must be `${VAR}` references, so the API never stores a secret.
 - On a store with no role bindings, `airlock serve` prints an admin API key once to stderr. `airlock bootstrap-key` makes a new one, and `airlock keys new` prints a key with its config file entry.
@@ -18,6 +18,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ### Changed
 
 - Errors from `/mcp` before the MCP layer, such as a missing token, use the shared `{"error": {"code", "message"}}` shape.
+- A `streamable_http` server's `url` must be an absolute http or https URL. A relative one, which never worked, now fails the config load.
 
 ### Fixed
 
