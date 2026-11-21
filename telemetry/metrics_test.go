@@ -116,7 +116,7 @@ func TestSpanContext(t *testing.T) {
 }
 
 func TestExportErrorHidesURL(t *testing.T) {
-	e := &otlpExporter{url: "http://user:hunter2@127.0.0.1:1/v1/traces?key=hunter2", client: &http.Client{}}
+	e := &otlpExporter{url: "http://user:hunter2@127.0.0.1:1/v1/traces?key=hunter2", client: &http.Client{}} //nolint:gosec // a made-up key the test looks for in the error
 	err := e.Export(context.Background(), nil)
 	if err == nil || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), "127.0.0.1:1") {
 		t.Fatalf("err = %v", err)

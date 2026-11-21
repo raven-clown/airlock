@@ -211,7 +211,7 @@ func TestFrontRequestsLimit(t *testing.T) {
 
 func TestFrontMaxInflight(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
-	slow := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	slow := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		close(entered)
 		<-release
 	})
