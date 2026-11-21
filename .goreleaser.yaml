@@ -36,3 +36,5 @@ changelog:
 # the release workflow writes its notes from release.json.
 release:
   mode: keep-existing
+  # Without it, attaching assets clears the prerelease flag of a tag such as v0.2.0-rc.1.
+  prerelease: auto
