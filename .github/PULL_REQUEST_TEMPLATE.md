@@ -18,6 +18,10 @@ HOW TO WRITE THE DESCRIPTION
 - Use bullets for separate items, not for one thought cut into pieces.
 - Keep it as short as the change allows. A one-line fix can have a three-line description.
 
+NO ISSUE NEEDED
+A pull request without an issue is welcome. Small fixes, docs, tests and new adapters go straight here. For a new endpoint, config key, schema change or anything that touches many packages, open this as a draft and start the description with a few lines on the design, so a maintainer can answer before you write all the code.
+If there is an issue, put `Closes #123` on the first line. If there is none, delete that line.
+
 CHECKS
 Workflows from a fork start once a maintainer approves them, so the checks can show as waiting for a while. That's expected.
 -->
