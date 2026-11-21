@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"slices"
 
+	"github.com/raven-clown/airlock/audit"
 	"github.com/raven-clown/airlock/internal/config"
 	"github.com/raven-clown/airlock/internal/runtime"
 	"github.com/raven-clown/airlock/internal/store"
@@ -122,17 +123,15 @@ func (h *handler) patchSettings(w http.ResponseWriter, r *http.Request) {
 	if !h.validate(w, r, true, changes...) {
 		return
 	}
+	puts := make([]store.Put, 0, len(changes))
+	events := make([]audit.Event, 0, len(changes))
 	for _, c := range changes {
-		ev := h.event(r, "update", "settings/"+c.Name)
-		if row, ok := rows[c.Name]; ok {
-			_, err = h.d.Store.Update(r.Context(), h.d.Org, store.KindSettings, c.Name, row.Version, c.Spec, ev)
-		} else {
-			_, err = h.d.Store.Create(r.Context(), h.d.Org, store.KindSettings, c.Name, c.Spec, ev)
-		}
-		if err != nil {
-			h.fail(w, r, "settings", err)
-			return
-		}
+		puts = append(puts, store.Put{Name: c.Name, Version: rows[c.Name].Version, Spec: c.Spec})
+		events = append(events, h.event(r, "update", "settings/"+c.Name))
+	}
+	if err := h.d.Store.PutMany(r.Context(), h.d.Org, store.KindSettings, puts, events...); err != nil {
+		h.fail(w, r, "settings", err)
+		return
 	}
 	h.reload(r)
 	h.getSettings(w, r)

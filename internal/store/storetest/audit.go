@@ -20,6 +20,34 @@ var auditTests = []subtest{
 	{"AuditFilters", testAuditFilters},
 	{"AuditPaging", testAuditPaging},
 	{"WriteWithAudit", testWriteWithAudit},
+	{"PutMany", testPutMany},
+}
+
+func testPutMany(t *testing.T, st *store.Store, org string) {
+	ctx := context.Background()
+	mustCreate(t, st, org, store.KindSettings, "a", "1")
+	ev := audit.Event{Time: time.Now().UTC().Truncate(time.Millisecond), Kind: audit.KindAdmin, Action: "update"}
+	before := revision(t, st, org)
+	err := st.PutMany(ctx, org, store.KindSettings, []store.Put{{Name: "b", Spec: spec("2")}, {Name: "a", Version: 9, Spec: spec("3")}}, ev)
+	if !errors.Is(err, store.ErrVersionConflict) {
+		t.Fatalf("stale version: %v", err)
+	}
+	if _, err := st.Get(ctx, org, store.KindSettings, "b"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("a failed PutMany kept its first row")
+	}
+	if len(listAudit(t, st, org)) != 0 || revision(t, st, org) != before {
+		t.Fatal("a failed PutMany left an audit record or moved the revision")
+	}
+	if err := st.PutMany(ctx, org, store.KindSettings, []store.Put{{Name: "b", Spec: spec("2")}, {Name: "a", Version: 1, Spec: spec("3")}}, ev, ev); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := st.Get(ctx, org, store.KindSettings, "a")
+	if specValue(t, a.Spec) != "3" || a.Version != 2 || revision(t, st, org) != before+1 || len(listAudit(t, st, org)) != 2 {
+		t.Fatalf("after PutMany: %+v, revision %d", a, revision(t, st, org))
+	}
+	if err := st.PutMany(ctx, org, store.KindSettings, []store.Put{{Name: "a", Spec: spec("x")}}); !errors.Is(err, store.ErrExists) {
+		t.Fatalf("create over an existing row: %v", err)
+	}
 }
 
 func fullEvent(at time.Time) audit.Event {

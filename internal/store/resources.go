@@ -200,6 +200,49 @@ func (s *Store) Update(ctx context.Context, org string, k Kind, name string, ver
 	return r, nil
 }
 
+// Put is one row PutMany writes: created when Version is 0, otherwise updated from Version.
+type Put struct {
+	Name    string
+	Version int64
+	Spec    json.RawMessage
+}
+
+// PutMany creates or updates rows of kind k in one transaction with events, so either every
+// row changes or none does.
+func (s *Store) PutMany(ctx context.Context, org string, k Kind, puts []Put, events ...audit.Event) error {
+	t, err := table(k)
+	if err != nil {
+		return err
+	}
+	now := millis(s.now().UTC().Truncate(time.Millisecond))
+	return s.write(ctx, org, func(tx *sql.Tx) (bool, error) {
+		for _, p := range puts {
+			source, have, err := lockRow(ctx, s, tx, t, org, p.Name)
+			if p.Version == 0 {
+				switch {
+				case err == nil:
+					return false, fmt.Errorf("%s %q: %w", k, p.Name, ErrExists)
+				case !errors.Is(err, ErrNotFound):
+					return false, err
+				}
+				if _, err := tx.ExecContext(ctx, s.q("INSERT INTO "+t+" (org_id, "+rowColumns+") VALUES (?, ?, ?, ?, ?, ?, ?)"),
+					org, p.Name, SourceAPI, int64(1), string(p.Spec), now, now); err != nil {
+					return false, fmt.Errorf("creating %s %q: %w", k, p.Name, err)
+				}
+				continue
+			}
+			if err := checkWritable(k, p.Name, source, have, p.Version, err); err != nil {
+				return false, err
+			}
+			if _, err := tx.ExecContext(ctx, s.q("UPDATE "+t+" SET spec = ?, version = ?, updated_at = ? WHERE org_id = ? AND name = ?"),
+				string(p.Spec), p.Version+1, now, org, p.Name); err != nil {
+				return false, fmt.Errorf("updating %s %q: %w", k, p.Name, err)
+			}
+		}
+		return len(puts) > 0, nil
+	}, events...)
+}
+
 // Delete removes an API row whose version is version, and stores events with it.
 func (s *Store) Delete(ctx context.Context, org string, k Kind, name string, version int64, events ...audit.Event) error {
 	t, err := table(k)
