@@ -46,6 +46,12 @@ jobs:
     name: container image
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # One image job at a time across releases, so the latest check and the push of :latest
+    # can't interleave with another release. queue: max keeps every waiting run.
+    concurrency:
+      group: release-image
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       packages: write
@@ -57,10 +63,14 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
           persist-credentials: false
+      # /releases/latest is 404 while only prereleases exist.
       - name: is this the latest release
         id: latest
         run: |
-          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          if ! latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2> "$RUNNER_TEMP/latest.err"); then
+            grep -q "HTTP 404" "$RUNNER_TEMP/latest.err" || { cat "$RUNNER_TEMP/latest.err"; exit 1; }
+            latest=""
+          fi
           if [ "$latest" = "$TAG" ]; then echo "latest=true" >> "$GITHUB_OUTPUT"; else echo "latest=false" >> "$GITHUB_OUTPUT"; fi
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

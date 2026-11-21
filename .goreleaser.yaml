@@ -38,3 +38,5 @@ release:
   mode: keep-existing
   # Without it, attaching assets clears the prerelease flag of a tag such as v0.2.0-rc.1.
   prerelease: auto
+  # A rerun after a partial upload replaces the assets that made it instead of failing on them.
+  replace_existing_artifacts: true
