@@ -132,4 +132,4 @@ jobs:
         run: |
           docker run --rm airlock:ci version
           docker run --detach --name airlock -p 8080:8080 airlock:ci
-          curl -fsS --retry 30 --retry-connrefused --retry-delay 1 http://localhost:8080/healthz || { docker logs airlock; exit 1; }
+          curl -fsS --retry 30 --retry-all-errors --retry-delay 1 http://localhost:8080/healthz || { docker logs airlock; exit 1; }
