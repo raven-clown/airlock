@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -92,6 +93,7 @@ func New(cfg Config) (*Authenticator, error) {
 	if cfg.Client == nil {
 		cfg.Client = http.DefaultClient
 	}
+	cfg.Client = noDowngrade(cfg.Client)
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -306,13 +308,46 @@ func init() {
 	})
 }
 
+// checkHTTPURL accepts https, and plain http only on a loopback address: whoever can change
+// the keys on the way can sign any token.
 func checkHTTPURL(s string) error {
 	u, err := url.Parse(s)
 	if err != nil {
 		return err
 	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return errors.New("must be an http or https URL")
+	switch {
+	case u.Host == "" || (u.Scheme != "http" && u.Scheme != "https"):
+		return errors.New("must be an https URL")
+	case u.Scheme == "http" && !Loopback(u.Hostname()):
+		return errors.New("must be https; plain http is only allowed on a loopback address")
 	}
 	return nil
+}
+
+// Loopback reports whether host is localhost or a loopback IP.
+func Loopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// noDowngrade wraps c so a redirect cannot move a fetch from https to http.
+func noDowngrade(c *http.Client) *http.Client {
+	out := *c
+	next := c.CheckRedirect
+	out.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) > 0 && via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+			return errors.New("refusing a redirect from https to http")
+		}
+		if next != nil {
+			return next(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &out
 }

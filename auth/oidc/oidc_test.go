@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -222,10 +223,35 @@ func TestNewChecks(t *testing.T) {
 		{Issuer: "idp", Audience: "a"},
 		{Issuer: "https://idp"},
 		{Issuer: "https://idp", Audience: "a", JWKSURL: "keys"},
+		{Issuer: "http://idp.example.com", Audience: "a"},
+		{Issuer: "https://idp", Audience: "a", JWKSURL: "http://keys.example.com/jwks"},
 	} {
 		if _, err := oidc.New(cfg); err == nil {
 			t.Fatalf("%+v accepted", cfg)
 		}
+	}
+	for _, issuer := range []string{"http://localhost:8080", "http://127.0.0.1:9", "http://[::1]:9", "https://idp.example.com"} {
+		if _, err := oidc.New(oidc.Config{Issuer: issuer, Audience: "a"}); err != nil {
+			t.Fatalf("%s refused: %v", issuer, err)
+		}
+	}
+}
+
+func TestNoRedirectToHTTP(t *testing.T) {
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"keys":[]}`)) }))
+	defer plain.Close()
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+"/keys", http.StatusFound)
+	}))
+	defer secure.Close()
+	a, err := oidc.New(oidc.Config{Issuer: secure.URL, Audience: "a", JWKSURL: secure.URL + "/keys", Client: secure.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := oidctest.Sign(t, jose.ES256, oidctest.NewKey(t), "k", map[string]any{"iss": secure.URL})
+	_, err = a.Verify(context.Background(), tok)
+	if !errors.Is(err, auth.ErrUnavailable) || !strings.Contains(err.Error(), "https to http") {
+		t.Fatalf("err = %v, want the downgrade refused", err)
 	}
 }
 

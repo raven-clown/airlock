@@ -15,6 +15,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/raven-clown/airlock/auth/apikey"
+	"github.com/raven-clown/airlock/auth/oidc"
 	"github.com/raven-clown/airlock/backend"
 	"github.com/raven-clown/airlock/internal/limits"
 	"github.com/raven-clown/airlock/internal/naming"
@@ -270,6 +271,9 @@ func (c *Config) normalize() error {
 			if s.URL == "" {
 				return fmt.Errorf("%s.url: required for streamable_http", at)
 			}
+			if !isHTTPURL(s.URL) {
+				return fmt.Errorf("%s.url: must be an absolute http or https URL", at)
+			}
 		default:
 			return fmt.Errorf("%s.transport: must be stdio or streamable_http", at)
 		}
@@ -360,14 +364,23 @@ func (c *Config) checkSettings() error {
 		return nil
 	}
 	switch {
-	case !isHTTPURL(o.Issuer):
-		return fmt.Errorf("settings.oidc.issuer: %q must be an http or https URL", o.Issuer)
+	case !isKeyURL(o.Issuer):
+		return fmt.Errorf("settings.oidc.issuer: %q must be an https URL, or http on a loopback address", o.Issuer)
 	case o.Audience == "":
 		return errors.New("settings.oidc.audience: required")
-	case o.JWKSURL != "" && !isHTTPURL(o.JWKSURL):
-		return fmt.Errorf("settings.oidc.jwks_url: %q must be an http or https URL", o.JWKSURL)
+	case o.JWKSURL != "" && !isKeyURL(o.JWKSURL):
+		return fmt.Errorf("settings.oidc.jwks_url: %q must be an https URL, or http on a loopback address", o.JWKSURL)
 	}
 	return nil
+}
+
+// isKeyURL accepts where signing keys may come from: https, or http on a loopback address.
+func isKeyURL(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return u.Scheme == "https" || (u.Scheme == "http" && oidc.Loopback(u.Hostname()))
 }
 
 func isHTTPURL(s string) bool {
