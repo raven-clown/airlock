@@ -13,6 +13,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Limits from the shared mothership profiles: `profiles`, `profile_bindings`, `settings.default_profile` and `settings.org_profile`, with `requests` and `tools.calls` (`rate`, `concurrency`). Requests over the limit get 429 with `Retry-After`, every response sends `RateLimit-Policy` and `RateLimit`, and `limits.max_inflight` answers 503 `overloaded` past a per-instance cap.
 - `/metrics` with `airlock_requests_total`, `airlock_request_duration_seconds`, `airlock_inflight_requests`, `airlock_limited_total`, `airlock_events_dropped_total` and airlock's own tool, backend, auth and reload series. `ops_listen_addr` moves `/metrics`, `/healthz` and `/readyz` to their own port.
 - OTLP/HTTP traces with `telemetry.otlp_endpoint`, `otlp_headers` and `sample_ratio`, and a `traceparent` sent to backends under airlock's own span.
+- Each release attaches `airlock` binaries for Linux, macOS and Windows on amd64 and arm64 with `checksums.txt`, and pushes a container image to `ghcr.io/raven-clown/airlock` that runs `airlock serve` on port 8080 with SQLite in `/data`.
 
 ### Changed
 

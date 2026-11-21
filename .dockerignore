@@ -1,0 +1,7 @@
+.git
+dist
+*.db
+*.db-*
+cover.out
+airlock.key
+Dockerfile
