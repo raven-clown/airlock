@@ -21,6 +21,8 @@ type Identity struct {
 	// Token is the raw bearer token, kept for forwarding. It is never logged.
 	Token  string
 	Claims map[string]any
+	// Profile is the limits profile a token's claim names, empty for none.
+	Profile string
 }
 
 // LogValue leaves the token and claims out of logs.
@@ -43,15 +45,24 @@ var (
 	ErrNotMine = errors.New("auth: credential not handled")
 	// ErrNoCredentials means the request has no credential any authenticator accepts.
 	ErrNoCredentials = errors.New("auth: no credentials")
+	// ErrUnavailable means a credential could not be checked, such as when the identity
+	// provider's keys cannot be fetched. It is not the caller's fault, and a retry may work.
+	ErrUnavailable = errors.New("auth: identity provider unavailable")
 )
 
 // InvalidError is a credential an authenticator recognised but rejected.
 type InvalidError struct {
 	Method string
+	// Reason is a short fixed code, such as expired, fit for a metric label.
 	Reason string
+	// Detail says more, for logs. It never holds the credential.
+	Detail string
 }
 
 func (e *InvalidError) Error() string {
+	if e.Detail != "" {
+		return fmt.Sprintf("%s: invalid credential: %s: %s", e.Method, e.Reason, e.Detail)
+	}
 	return fmt.Sprintf("%s: invalid credential: %s", e.Method, e.Reason)
 }
 
