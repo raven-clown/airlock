@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -41,6 +42,21 @@ func TestTakeReset(t *testing.T) {
 	b, _ := s.Take(context.Background(), "k", r, time.Unix(0, 0))
 	if b.Reset != time.Second || b.Remaining != 59 {
 		t.Fatalf("%+v", b)
+	}
+}
+
+func TestSweepDropsFullBuckets(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemoryStore()
+	r := Rate{Count: 10, Period: time.Second}
+	start := time.Unix(0, 0)
+	for i := range minSweep - 1 {
+		_, _ = s.Take(ctx, fmt.Sprint("old", i), r, start)
+	}
+	later := start.Add(time.Hour)
+	_, _ = s.Take(ctx, "new", r, later)
+	if n := s.Len(); n != 1 {
+		t.Fatalf("%d keys kept, want only the active one", n)
 	}
 }
 
