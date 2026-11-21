@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-21
+
 ### Added
 
 - OIDC sign-in from any provider through discovery and a cached JWKS, set in `settings.oidc` (`issuer`, `audience`, `jwks_url`, `subject_claim`, `groups_claim`, `profile_claim`). A 401 points MCP clients at `/.well-known/oauth-protected-resource`, and an issuer that cannot be reached answers 503 `auth_unavailable`. The issuer and its keys must be served over https, or plain http on a loopback address.
@@ -41,5 +43,6 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Audit records always go to the `audit_events` table and are kept for `audit.retention` (30 days by default).
 - `role_bindings` and `settings` in the config file. `allowed_origins` moved to `settings.allowed_origins`.
 
-[Unreleased]: https://github.com/raven-clown/airlock/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/raven-clown/airlock/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/raven-clown/airlock/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/raven-clown/airlock/releases/tag/v0.1.0
