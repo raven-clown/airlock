@@ -28,7 +28,12 @@ import (
 	"github.com/raven-clown/airlock/internal/runtime"
 	"github.com/raven-clown/airlock/internal/testutil/mcpserver"
 	"github.com/raven-clown/airlock/policy/rules"
+	"github.com/raven-clown/airlock/telemetry"
 )
+
+type discardSpans struct{}
+
+func (discardSpans) Export(context.Context, []telemetry.SpanData) error { return nil }
 
 const (
 	engKey     = apikey.Prefix + "eng"
@@ -86,24 +91,55 @@ func (s *syncBuffer) String() string {
 }
 
 type harness struct {
-	gw    *Gateway
-	url   string
-	sink  *memSink
-	logs  *syncBuffer
-	alpha *httptest.Server
-	set   *backend.Set
+	gw      *Gateway
+	url     string
+	sink    *memSink
+	logs    *syncBuffer
+	alpha   *httptest.Server
+	set     *backend.Set
+	metrics *telemetry.Metrics
+	seen    *headerLog
 }
 
-func newHarness(t *testing.T) *harness {
+// headerLog keeps the headers of every request a backend got.
+type headerLog struct {
+	mu   sync.Mutex
+	all  []http.Header
+	next http.Handler
+}
+
+func (l *headerLog) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	l.mu.Lock()
+	l.all = append(l.all, r.Header.Clone())
+	l.mu.Unlock()
+	l.next.ServeHTTP(w, r)
+}
+
+func (l *headerLog) values(name string) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []string
+	for _, h := range l.all {
+		if v := h.Get(name); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func newHarness(t *testing.T) *harness { return newHarnessWith(t, nil) }
+
+func newHarnessWith(t *testing.T, change func(*config.Config)) *harness {
 	t.Helper()
-	alpha := httptest.NewServer(server.NewStreamableHTTPServer(mcpserver.New("alpha")))
+	seen := &headerLog{next: server.NewStreamableHTTPServer(mcpserver.New("alpha"))}
+	alpha := httptest.NewServer(seen)
 	beta := httptest.NewServer(server.NewStreamableHTTPServer(mcpserver.New("beta")))
 	t.Cleanup(alpha.Close)
 	t.Cleanup(beta.Close)
 
 	logs := &syncBuffer{}
 	log := slog.New(slog.NewTextHandler(logs, nil))
-	snap, err := runtime.Build(&config.Config{
+	cfg := &config.Config{
 		APIKeys: []apikey.Key{
 			{Name: "eng", SHA256: apikey.Hash(engKey), Groups: []string{"eng"}},
 			{Name: "interns", SHA256: apikey.Hash(internsKey), Groups: []string{"interns"}},
@@ -112,7 +148,11 @@ func newHarness(t *testing.T) *harness {
 			{Name: "eng", Subjects: []string{"group:eng"}, Allow: []string{"alpha__*", "beta__*"}},
 			{Name: "interns", Subjects: []string{"group:interns"}, Allow: []string{"beta__*"}},
 		},
-	})
+	}
+	if change != nil {
+		change(cfg)
+	}
+	snap, err := runtime.Build(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,14 +170,21 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() { _ = pipe.Close(context.Background()) })
 
 	holder := runtime.NewHolder(snap)
-	gw := New(Options{Backends: set, Runtime: holder, Audit: pipe, Logger: log, Instance: "test", Version: "test"})
-	h := &harness{gw: gw, sink: sink, logs: logs, alpha: alpha, set: set}
+	metrics := telemetry.NewMetrics("test")
+	tracer, err := telemetry.NewTracer(telemetry.TracerConfig{Exporter: discardSpans{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tracer.Shutdown(context.Background()) })
+	gw := New(Options{Backends: set, Runtime: holder, Audit: pipe, Logger: log, Instance: "test", Version: "test", Metrics: metrics, Tracer: tracer})
+	metrics.SetCatalog(gw.Known)
+	h := &harness{gw: gw, sink: sink, logs: logs, alpha: alpha, set: set, metrics: metrics, seen: seen}
 	waitFor(t, "backend tools", func() bool {
 		names := h.catalogNames()
 		return slices.Contains(names, "alpha__echo") && slices.Contains(names, "beta__echo")
 	})
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", httpx.Front(httpx.FrontOptions{Runtime: holder, Logger: log}, gw.HTTPHandler()))
+	mux.Handle("/mcp", httpx.Front(httpx.FrontOptions{Runtime: holder, Logger: log, Metrics: metrics, Tracer: tracer}, gw.HTTPHandler()))
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	h.url = ts.URL + "/mcp"

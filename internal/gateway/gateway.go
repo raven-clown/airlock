@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -33,6 +34,9 @@ type Options struct {
 	Logger   *slog.Logger
 	Instance string
 	Version  string
+	Metrics  *telemetry.Metrics
+	// Tracer starts a span for a tool call that arrives with none, as over stdio.
+	Tracer *telemetry.Tracer
 }
 
 // Gateway is the MCP server clients talk to.
@@ -43,6 +47,7 @@ type Gateway struct {
 	streamable *server.StreamableHTTPServer
 	sessions   *sessions
 	refreshMu  sync.Mutex
+	known      atomic.Pointer[map[string]bool]
 }
 
 // New builds a gateway and fills its catalog from the backends.
@@ -152,22 +157,51 @@ func (g *Gateway) auditDenied(ctx context.Context, _ any, req *mcp.CallToolReque
 	e := g.event(ctx, id, srv, tool, d)
 	e.Outcome = audit.OutcomeDenied
 	g.opts.Audit.Record(e)
+	g.opts.Metrics.ToolCall(srv, tool, e.Outcome, 0)
+}
+
+// toolSpan starts the span of one tool call, under the request's span when there is one.
+func (g *Gateway) toolSpan(ctx context.Context) *telemetry.Span {
+	if parent := telemetry.SpanFrom(ctx); parent != nil {
+		return parent.Child("tools/call", telemetry.SpanInternal)
+	}
+	h := httpx.HeadersFromContext(ctx)
+	return g.opts.Tracer.Start("tools/call", telemetry.SpanInternal, h.Get("Traceparent"), h.Get("Tracestate"))
 }
 
 func (g *Gateway) handler(serverName, tool string) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		start := time.Now()
+		snap := g.opts.Runtime.Current()
 		id, _ := auth.FromContext(ctx)
 		d := g.decide(ctx, id, serverName, req.Params.Name, req.GetArguments())
 		e := g.event(ctx, id, serverName, tool, d)
+		span := g.toolSpan(ctx)
+		span.SetString("mcp.tool.name", req.Params.Name)
+		span.SetString("airlock.server", serverName)
 		defer func() {
-			e.DurationMS = time.Since(start).Milliseconds()
+			elapsed := time.Since(start)
+			e.DurationMS = elapsed.Milliseconds()
 			g.opts.Audit.Record(e)
+			g.opts.Metrics.ToolCall(serverName, tool, e.Outcome, elapsed)
+			span.SetString("airlock.outcome", e.Outcome)
+			if e.Outcome != audit.OutcomeOK && e.Outcome != audit.OutcomeToolError {
+				span.Fail(e.Outcome)
+			}
+			span.End()
 		}()
 		if !d.Allow {
 			e.Outcome = audit.OutcomeDenied
 			return nil, fmt.Errorf("tool '%s' not found: %w", req.Params.Name, server.ErrToolNotFound)
 		}
+		ticket, denied := snap.Limits.ToolCall(ctx, runtime.Caller(id))
+		if denied != nil {
+			e.Outcome = audit.OutcomeRateLimited
+			e.Error = denied.Code
+			g.opts.Metrics.Limited(denied.Code)
+			return mcp.NewToolResultError(denied.Code + ": " + denied.Message), nil
+		}
+		defer ticket.Release()
 		b, ok := g.opts.Backends.Get(serverName)
 		if !ok {
 			e.Outcome = audit.OutcomeBackendUnavailable
@@ -175,7 +209,12 @@ func (g *Gateway) handler(serverName, tool string) server.ToolHandlerFunc {
 		}
 		upstream := req
 		upstream.Params.Name = tool
-		res, err := b.Call(ctx, id, upstream)
+		call := span.Child("call "+serverName, telemetry.SpanClient)
+		res, err := b.Call(httpx.WithTraceparent(ctx, call.Traceparent()), id, upstream)
+		if err != nil {
+			call.Fail("backend call failed")
+		}
+		call.End()
 		switch {
 		case err != nil && ctx.Err() != nil:
 			e.Outcome = audit.OutcomeCanceled

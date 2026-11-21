@@ -22,6 +22,7 @@ import (
 	"github.com/raven-clown/airlock/internal/config"
 	"github.com/raven-clown/airlock/internal/gateway"
 	"github.com/raven-clown/airlock/internal/httpx"
+	"github.com/raven-clown/airlock/internal/limits"
 	"github.com/raven-clown/airlock/internal/provision"
 	"github.com/raven-clown/airlock/internal/runtime"
 	"github.com/raven-clown/airlock/internal/store"
@@ -127,7 +128,7 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 		_, _ = fmt.Fprintf(stderr, "airlock: %v\n", err)
 		return 1
 	}
-	front := httpx.FrontOptions{Runtime: holder, Logger: log}
+	front := httpx.FrontOptions{Runtime: holder, Logger: log, Inflight: limits.NewInflight(cfg.Limits.MaxInflight)}
 	mcp := httpx.CheckOrigin(func() []string { return holder.Current().Settings.AllowedOrigins }, httpx.Front(front, gw.HTTPHandler()))
 	srv := &http.Server{Handler: httpx.NewMux(httpx.Routes{
 		MCP:      mcp,
