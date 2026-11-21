@@ -151,6 +151,25 @@ func TestOIDCReplacedWhenSettingsChange(t *testing.T) {
 	}
 }
 
+func TestChangeBeforeFirstCheckIsLoaded(t *testing.T) {
+	ctx := context.Background()
+	st, _ := storeWith(t, "")
+	src := NewStoreSource(st, store.DefaultOrg, config.Default())
+	first, err := src.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHolder(first)
+	r := NewReloader(src, h, WatchOptions{Start: StartVersion(first)})
+	rule, _ := json.Marshal(map[string]any{"name": "late", "subjects": []string{"*"}, "allow": []string{"*"}})
+	if _, err := st.Create(ctx, store.DefaultOrg, store.KindRules, "late", rule); err != nil {
+		t.Fatal(err)
+	}
+	if swapped, err := r.Check(ctx); !swapped || err != nil {
+		t.Fatalf("a write made before the first check was not loaded: %v, %v", swapped, err)
+	}
+}
+
 func TestBadProfileRowKeepsSnapshot(t *testing.T) {
 	ctx := context.Background()
 	st, _ := storeWith(t, "")

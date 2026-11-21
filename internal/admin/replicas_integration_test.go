@@ -48,7 +48,7 @@ func newReplica(t *testing.T, dsn, org string, cfg *config.Config) *replica {
 	}
 	holder := runtime.NewHolder(snap)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return &replica{holder: holder, src: src, st: st, reloader: runtime.NewReloader(src, holder, runtime.WatchOptions{Every: 2 * time.Second, Logger: log})}
+	return &replica{holder: holder, src: src, st: st, reloader: runtime.NewReloader(src, holder, runtime.WatchOptions{Every: 2 * time.Second, Logger: log, Start: runtime.StartVersion(snap)})}
 }
 
 // TestReplicasShareChanges: a rule written through one replica's admin API is enforced by
@@ -67,10 +67,6 @@ func TestReplicasShareChanges(t *testing.T) {
 	b := newReplica(t, dsn, org, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	// Read the starting revision first, as a replica that is already running has.
-	if _, err := b.reloader.Check(ctx); err != nil {
-		t.Fatal(err)
-	}
 	go b.reloader.Run(ctx)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

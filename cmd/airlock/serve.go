@@ -114,6 +114,7 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 	reloader := runtime.NewReloader(src, holder, runtime.WatchOptions{
 		Every:    reloadEvery,
 		Logger:   log,
+		Start:    runtime.StartVersion(snap),
 		OnResult: metrics.Reload,
 		OnSwap: func(s *runtime.Snapshot) {
 			metrics.Revision(s.Revision)
@@ -207,6 +208,7 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 // whether each backend is up.
 func report(ctx context.Context, m *telemetry.Metrics, pipe *audit.Pipeline, set *backend.Set, every time.Duration) {
 	var dropped uint64
+	seen := map[string]bool{}
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	for {
@@ -214,9 +216,18 @@ func report(ctx context.Context, m *telemetry.Metrics, pipe *audit.Pipeline, set
 			m.Dropped("audit", float64(n-dropped))
 			dropped = n
 		}
+		now := map[string]bool{}
 		for _, b := range set.All() {
+			now[b.Name()] = true
 			m.BackendUp(b.Name(), b.Status().Up())
 		}
+		// A removed server reads as down rather than keeping its last state.
+		for name := range seen {
+			if !now[name] {
+				m.BackendUp(name, false)
+			}
+		}
+		seen = now
 		select {
 		case <-ctx.Done():
 			return

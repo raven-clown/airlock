@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -177,6 +178,9 @@ type WatchOptions struct {
 	Logger   *slog.Logger
 	// Ready is closed once the starting version has been read.
 	Ready chan<- struct{}
+	// Start is the version the holder's snapshot was built from. With it set, a change
+	// made before the first check is loaded by that check instead of taken as the start.
+	Start string
 }
 
 // Reloader swaps in a new snapshot when the source's version moves, on its own loop and when
@@ -198,8 +202,11 @@ func NewReloader(src Source, h *Holder, opts WatchOptions) *Reloader {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Reloader{src: src, h: h, opts: opts, log: log}
+	return &Reloader{src: src, h: h, opts: opts, log: log, last: opts.Start, seen: opts.Start != ""}
 }
+
+// StartVersion is the WatchOptions.Start of a snapshot from a StoreSource.
+func StartVersion(s *Snapshot) string { return strconv.FormatInt(s.Revision, 10) }
 
 // Check reloads when the version has moved since the last check, and reports whether it
 // swapped. A failed load keeps the current snapshot and is not tried again until the

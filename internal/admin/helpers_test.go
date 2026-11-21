@@ -98,10 +98,7 @@ func newRig(t *testing.T, doc string, change func(*config.Config)) *rig {
 	}
 	holder := runtime.NewHolder(snap)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	reloader := runtime.NewReloader(src, holder, runtime.WatchOptions{Logger: log})
-	if _, err := reloader.Check(ctx); err != nil {
-		t.Fatal(err)
-	}
+	reloader := runtime.NewReloader(src, holder, runtime.WatchOptions{Logger: log, Start: runtime.StartVersion(snap)})
 	adm := New(Deps{
 		Store: st, Org: store.DefaultOrg, Source: src, Runtime: holder, Reloader: reloader, Catalog: catalog,
 		Process: cfg, Logger: log, Version: "test", Instance: "test-1", Started: time.Now().Add(-time.Minute),
