@@ -209,7 +209,7 @@ func NewTracer(cfg TracerConfig) (*Tracer, error) {
 		if client == nil {
 			client = &http.Client{}
 		}
-		exp = &otlpExporter{url: target, headers: cfg.Headers, client: client, version: cfg.Version}
+		exp = &otlpExporter{url: target, headers: cfg.Headers, client: sameOrigin(client), version: cfg.Version}
 	}
 	if cfg.SampleRatio < 0 || cfg.SampleRatio > 1 {
 		return nil, fmt.Errorf("telemetry.sample_ratio %v must be between 0 and 1", cfg.SampleRatio)
@@ -276,7 +276,10 @@ func (t *Tracer) run() {
 			ctx, cancel := context.WithTimeout(context.Background(), spanExportTimeout)
 			err := t.exp.Export(ctx, batch)
 			cancel()
+			var partial *PartialError
 			switch {
+			case errors.As(err, &partial):
+				t.drop(min(partial.Rejected, len(batch)))
 			case err != nil:
 				t.drop(len(batch))
 				// One line when exports start to fail, not one per batch.

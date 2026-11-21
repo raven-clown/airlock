@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -120,6 +121,60 @@ func TestExportErrorHidesURL(t *testing.T) {
 	err := e.Export(context.Background(), nil)
 	if err == nil || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), "127.0.0.1:1") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPartialSuccessCountsRejected(t *testing.T) {
+	for _, body := range []string{`{"partialSuccess":{"rejectedSpans":"2","errorMessage":"too old"}}`, `{"partialSuccess":{"rejectedSpans":2}}`} {
+		collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) }))
+		var mu sync.Mutex
+		dropped := 0
+		tr, err := NewTracer(TracerConfig{Endpoint: collector.URL, Dropped: func(n int) {
+			mu.Lock()
+			defer mu.Unlock()
+			dropped += n
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range 3 {
+			tr.Start("x", SpanServer, "", "").End()
+		}
+		if err := tr.Shutdown(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		collector.Close()
+		mu.Lock()
+		if dropped != 2 {
+			t.Fatalf("%s: %d dropped, want 2", body, dropped)
+		}
+		mu.Unlock()
+	}
+}
+
+func TestNoRedirectToAnotherOrigin(t *testing.T) {
+	var mu sync.Mutex
+	var gotKey string
+	other := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		gotKey = r.Header.Get("X-Api-Key")
+	}))
+	defer other.Close()
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/v1/traces", http.StatusTemporaryRedirect)
+	}))
+	defer collector.Close()
+	tr, err := NewTracer(TracerConfig{Endpoint: collector.URL, Headers: map[string]string{"X-Api-Key": "secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr.Start("x", SpanServer, "", "").End()
+	_ = tr.Shutdown(context.Background())
+	mu.Lock()
+	defer mu.Unlock()
+	if gotKey != "" {
+		t.Fatal("the collector key followed a redirect to another origin")
 	}
 }
 

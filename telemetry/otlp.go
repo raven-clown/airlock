@@ -160,10 +160,59 @@ func (e *otlpExporter) Export(ctx context.Context, spans []SpanData) error {
 		return fmt.Errorf("posting spans to %s: %w", CollectorHost(e.url), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	// The body is read so the connection can be used again; what it says is not needed.
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	answer, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("the collector answered %s", resp.Status)
 	}
+	if n := rejectedSpans(answer); n > 0 {
+		return &PartialError{Rejected: n}
+	}
 	return nil
+}
+
+// PartialError is a collector that took the batch but rejected some of its spans. The rest
+// were kept, so the batch is not sent again.
+type PartialError struct {
+	Rejected int
+}
+
+func (e *PartialError) Error() string {
+	return fmt.Sprintf("the collector rejected %d spans", e.Rejected)
+}
+
+// rejectedSpans reads partialSuccess.rejectedSpans, which OTLP/JSON writes as a string and
+// some collectors as a number.
+func rejectedSpans(body []byte) int {
+	var resp struct {
+		PartialSuccess struct {
+			RejectedSpans any `json:"rejectedSpans"`
+		} `json:"partialSuccess"`
+	}
+	if json.Unmarshal(body, &resp) != nil {
+		return 0
+	}
+	switch v := resp.PartialSuccess.RejectedSpans.(type) {
+	case string:
+		n, _ := strconv.Atoi(v)
+		return max(n, 0)
+	case float64:
+		return max(int(v), 0)
+	}
+	return 0
+}
+
+// sameOrigin keeps a client from following a redirect to another scheme or host, which would
+// hand the configured headers, often a collector key, to someone else.
+func sameOrigin(c *http.Client) *http.Client {
+	out := *c
+	out.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if first := via[0].URL; req.URL.Scheme != first.Scheme || req.URL.Host != first.Host {
+			return errors.New("refusing a redirect to another origin")
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &out
 }

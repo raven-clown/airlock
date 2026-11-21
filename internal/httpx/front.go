@@ -108,8 +108,10 @@ func Front(o FrontOptions, next http.Handler) http.Handler {
 	})
 }
 
+// isStream reports an MCP listen stream. It still costs a unit of the rate, and
+// limits.max_inflight caps how many are open on an instance.
 func isStream(r *http.Request) bool {
-	return r.Method == http.MethodGet && strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+	return r.Method == http.MethodGet && r.URL.Path == "/mcp" && strings.Contains(r.Header.Get("Accept"), "text/event-stream")
 }
 
 func refuse(w http.ResponseWriter, r *http.Request, snap *runtime.Snapshot, m *telemetry.Metrics, log *slog.Logger, err error) {
