@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 )
 
@@ -150,7 +152,12 @@ func (e *otlpExporter) Export(ctx context.Context, spans []SpanData) error {
 	}
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return err
+		// A url.Error repeats the whole URL, whose user part or query can hold a key.
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
+		return fmt.Errorf("posting spans to %s: %w", CollectorHost(e.url), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	// The body is read so the connection can be used again; what it says is not needed.

@@ -115,6 +115,14 @@ func TestSpanContext(t *testing.T) {
 	}
 }
 
+func TestExportErrorHidesURL(t *testing.T) {
+	e := &otlpExporter{url: "http://user:hunter2@127.0.0.1:1/v1/traces?key=hunter2", client: &http.Client{}}
+	err := e.Export(context.Background(), nil)
+	if err == nil || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), "127.0.0.1:1") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 type discard struct{}
 
 func (discard) Export(context.Context, []SpanData) error { return nil }
