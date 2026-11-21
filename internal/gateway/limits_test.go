@@ -76,7 +76,9 @@ func TestToolCallConcurrencyLimited(t *testing.T) {
 	})
 	res, err := callTool(h.connect(t, engKey), "alpha__echo", nil)
 	cancel()
-	_ = <-waiting
+	if err := <-waiting; err == nil {
+		t.Error("the canceled call returned no error")
+	}
 	if err != nil || !res.IsError || !strings.HasPrefix(text(res), "concurrency_limited: ") {
 		t.Fatalf("second call: %+v (%q), %v", res, text(res), err)
 	}
