@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/raven-clown/airlock/auth"
 	"github.com/raven-clown/airlock/backend"
+	"github.com/raven-clown/airlock/internal/config"
 	"github.com/raven-clown/airlock/internal/httpx"
 )
 
@@ -41,6 +43,7 @@ var DefaultOptions = Options{BackoffBase: time.Second, BackoffMax: 60 * time.Sec
 type Backend struct {
 	cfg  backend.Config
 	opts Options
+	env  func(string) (string, bool)
 	log  *slog.Logger
 	pool *pool
 
@@ -68,7 +71,11 @@ func New(cfg backend.Config, deps backend.Deps, opts Options) *Backend {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	b := &Backend{cfg: cfg, opts: opts, log: log.With("backend", cfg.Name), done: make(chan struct{}), broken: make(chan struct{}, 1)}
+	env := deps.Env
+	if env == nil {
+		env = os.LookupEnv
+	}
+	b := &Backend{cfg: cfg, opts: opts, env: env, log: log.With("backend", cfg.Name), done: make(chan struct{}), broken: make(chan struct{}, 1)}
 	b.status = backend.Status{State: backend.StateStarting, Since: opts.Now()}
 	empty := []mcp.Tool{}
 	b.tools.Store(&empty)
@@ -211,6 +218,10 @@ func (b *Backend) runOnce() error {
 	if b.cfg.Auth.Mode == backend.AuthForward {
 		headers = b.cfg.Auth.DiscoveryHeaders
 	}
+	headers, err := expandHeaders(headers, b.env)
+	if err != nil {
+		return err
+	}
 	cli, err := b.dial(b.ctx, headers)
 	if err != nil {
 		return err
@@ -277,6 +288,20 @@ func (b *Backend) refresh(cli *client.Client) error {
 		fn()
 	}
 	return nil
+}
+
+// expandHeaders resolves ${VAR} references when the backend connects, so the secret stays
+// in airlock's environment and never in the store.
+func expandHeaders(in map[string]string, env func(string) (string, bool)) (map[string]string, error) {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		val, err := config.Expand(v, env)
+		if err != nil {
+			return nil, fmt.Errorf("header %s: %w", k, err)
+		}
+		out[k] = val
+	}
+	return out, nil
 }
 
 func (b *Backend) dialCaller(ctx context.Context, token string) (*client.Client, error) {

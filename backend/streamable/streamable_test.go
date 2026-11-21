@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -146,6 +147,56 @@ func TestHTTPStatic(t *testing.T) {
 		if r.Header.Get("X-Key") != "abc" {
 			t.Fatalf("%s request without X-Key", r.Method)
 		}
+	}
+}
+
+func startWithEnv(t *testing.T, cfg backend.Config, env map[string]string) *Backend {
+	t.Helper()
+	cfg.Name, cfg.CallTimeout = "remote", 5*time.Second
+	lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+	b := New(cfg, backend.Deps{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Env: lookup}, testOpts)
+	if err := b.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	return b
+}
+
+func TestHTTPHeaderVariables(t *testing.T) {
+	ts, rec := newServer(t)
+	b := startWithEnv(t, backend.Config{URL: ts.URL, Auth: backend.HTTPAuth{Mode: backend.AuthStatic,
+		Headers: map[string]string{"Authorization": "Bearer ${KEY}", "X-Project": "mothership"}}}, map[string]string{"KEY": "abc"})
+	waitFor(t, "backend up", func() bool { return b.Status().Up() })
+	if _, err := echo(context.Background(), b, nil, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rec.all() {
+		if r.Header.Get("Authorization") != "Bearer abc" || r.Header.Get("X-Project") != "mothership" {
+			t.Fatalf("%s request sent Authorization %q", r.Method, r.Header.Get("Authorization"))
+		}
+	}
+}
+
+func TestHTTPDiscoveryHeaderVariables(t *testing.T) {
+	ts, rec := newServer(t)
+	b := startWithEnv(t, backend.Config{URL: ts.URL, Auth: backend.HTTPAuth{Mode: backend.AuthForward,
+		DiscoveryHeaders: map[string]string{"Authorization": "Bearer ${D}"}}}, map[string]string{"D": "disc"})
+	waitFor(t, "backend up", func() bool { return b.Status().Up() })
+	if len(callsWith(rec, "Authorization", "Bearer disc")) == 0 {
+		t.Fatal("discovery headers were sent unresolved")
+	}
+}
+
+func TestHTTPHeaderVariableMissing(t *testing.T) {
+	ts, rec := newServer(t)
+	b := startWithEnv(t, backend.Config{URL: ts.URL, Auth: backend.HTTPAuth{Mode: backend.AuthStatic,
+		Headers: map[string]string{"Authorization": "Bearer ${NOPE}"}}}, nil)
+	waitFor(t, "backend down", func() bool {
+		s := b.Status()
+		return s.State == backend.StateDown && strings.Contains(s.Err, "NOPE")
+	})
+	if n := len(rec.all()); n != 0 {
+		t.Fatalf("%d requests sent with an unset variable", n)
 	}
 }
 
