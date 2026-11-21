@@ -72,8 +72,15 @@ func query(t *testing.T, st *store.Store, org string, q store.AuditQuery) []audi
 		t.Fatal(err)
 	}
 	for i := range got {
-		if got[i].ID <= 0 || (i > 0 && got[i].ID >= got[i-1].ID) {
-			t.Fatalf("ids not newest first: %d after %d", got[i].ID, got[max(i-1, 0)].ID)
+		if got[i].ID <= 0 {
+			t.Fatalf("record without an id: %+v", got[i])
+		}
+		if i == 0 {
+			continue
+		}
+		prev, cur := got[i-1], got[i]
+		if cur.Time.After(prev.Time) || (cur.Time.Equal(prev.Time) && cur.ID >= prev.ID) {
+			t.Fatalf("not newest first: %v/%d after %v/%d", cur.Time, cur.ID, prev.Time, prev.ID)
 		}
 	}
 	for i := range got {
@@ -120,15 +127,17 @@ func testAuditFilters(t *testing.T, st *store.Store, org string) {
 func testAuditPaging(t *testing.T, st *store.Store, org string) {
 	ctx := context.Background()
 	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	for i := range 5 {
-		if err := st.InsertAudit(ctx, org, []audit.Event{{Time: at, Kind: audit.KindTool, Tool: string(rune('a' + i))}}); err != nil {
+	// Written in this order, but a started two seconds after b, c and e, and d one second
+	// after, as a slow tool call is recorded after a quicker one that began later.
+	for i, offset := range []time.Duration{2 * time.Second, 0, 0, time.Second, 0} {
+		if err := st.InsertAudit(ctx, org, []audit.Event{{Time: at.Add(offset), Kind: audit.KindTool, Tool: string(rune('a' + i))}}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var tools string
-	var before int64
-	for range 3 {
-		page, err := st.ListAudit(ctx, org, store.AuditQuery{BeforeID: before, Limit: 2})
+	var last audit.Event
+	for range 4 {
+		page, err := st.ListAudit(ctx, org, store.AuditQuery{BeforeTime: last.Time, BeforeID: last.ID, Limit: 2})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -138,10 +147,10 @@ func testAuditPaging(t *testing.T, st *store.Store, org string) {
 		if len(page) == 0 {
 			break
 		}
-		before = page[len(page)-1].ID
+		last = page[len(page)-1]
 	}
-	if tools != "edcba" {
-		t.Fatalf("pages gave %q", tools)
+	if tools != "adecb" {
+		t.Fatalf("pages gave %q, want newest event first", tools)
 	}
 }
 

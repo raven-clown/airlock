@@ -72,8 +72,10 @@ type AuditQuery struct {
 	Kind, Subject, Server, Tool, Outcome string
 	// Since is inclusive and Until exclusive.
 	Since, Until time.Time
-	// BeforeID returns only records older than that id, for paging.
-	BeforeID int64
+	// BeforeTime and BeforeID return only records after that one in the newest-first order,
+	// for paging. Set both, from the last record of the previous page.
+	BeforeTime time.Time
+	BeforeID   int64
 	// Limit <= 0 means all.
 	Limit int
 }
@@ -99,11 +101,13 @@ func (s *Store) ListAudit(ctx context.Context, org string, q AuditQuery) ([]audi
 		args = append(args, millis(q.Until))
 	}
 	if q.BeforeID > 0 {
-		where = append(where, "id < ?")
-		args = append(args, q.BeforeID)
+		at := millis(q.BeforeTime)
+		where = append(where, "(occurred_at < ? OR (occurred_at = ? AND id < ?))")
+		args = append(args, at, at, q.BeforeID)
 	}
-	// Newest first by id: ids follow insert order, which a page cursor needs to be stable.
-	query := "SELECT id, " + auditColumns + " FROM audit_events WHERE " + strings.Join(where, " AND ") + " ORDER BY id DESC"
+	// Newest first by the time of the event, not by when the record was written: a tool call
+	// is recorded when it ends. The id breaks ties, so pages stay stable.
+	query := "SELECT id, " + auditColumns + " FROM audit_events WHERE " + strings.Join(where, " AND ") + " ORDER BY occurred_at DESC, id DESC"
 	if q.Limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, q.Limit)

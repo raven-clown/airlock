@@ -119,6 +119,17 @@ func (s *Store) List(ctx context.Context, org string, k Kind, after string, limi
 	return out, nil
 }
 
+// firstVersion is the version a new row starts at: the revision its write moves the org to.
+// Every update moves the revision too, so a row deleted and made again under the same name
+// starts above any version the old one had, and a stale If-Match cannot reach the new one.
+func (s *Store) firstVersion(ctx context.Context, tx *sql.Tx, org string) (int64, error) {
+	var v int64
+	if err := tx.QueryRowContext(ctx, s.q("SELECT value FROM revision WHERE org_id = ?"), org).Scan(&v); err != nil {
+		return 0, fmt.Errorf("reading revision: %w", err)
+	}
+	return v + 1, nil
+}
+
 // Create adds a row owned by the API, and stores events with it.
 func (s *Store) Create(ctx context.Context, org string, k Kind, name string, spec json.RawMessage, events ...audit.Event) (Row, error) {
 	t, err := table(k)
@@ -126,15 +137,18 @@ func (s *Store) Create(ctx context.Context, org string, k Kind, name string, spe
 		return Row{}, err
 	}
 	now := s.now().UTC().Truncate(time.Millisecond)
-	r := Row{Name: name, Source: SourceAPI, Version: 1, Spec: spec, CreatedAt: now, UpdatedAt: now}
+	r := Row{Name: name, Source: SourceAPI, Spec: spec, CreatedAt: now, UpdatedAt: now}
 	err = s.write(ctx, org, func(tx *sql.Tx) (bool, error) {
 		if _, _, err := lockRow(ctx, s, tx, t, org, name); err == nil {
 			return false, fmt.Errorf("%s %q: %w", k, name, ErrExists)
 		} else if !errors.Is(err, ErrNotFound) {
 			return false, err
 		}
+		if r.Version, err = s.firstVersion(ctx, tx, org); err != nil {
+			return false, err
+		}
 		_, err := tx.ExecContext(ctx, s.q("INSERT INTO "+t+" (org_id, "+rowColumns+") VALUES (?, ?, ?, ?, ?, ?, ?)"),
-			org, name, SourceAPI, int64(1), string(spec), millis(now), millis(now))
+			org, name, SourceAPI, r.Version, string(spec), millis(now), millis(now))
 		if err != nil {
 			return false, fmt.Errorf("creating %s %q: %w", k, name, err)
 		}
@@ -225,8 +239,12 @@ func (s *Store) PutMany(ctx context.Context, org string, k Kind, puts []Put, eve
 				case !errors.Is(err, ErrNotFound):
 					return false, err
 				}
+				first, err := s.firstVersion(ctx, tx, org)
+				if err != nil {
+					return false, err
+				}
 				if _, err := tx.ExecContext(ctx, s.q("INSERT INTO "+t+" (org_id, "+rowColumns+") VALUES (?, ?, ?, ?, ?, ?, ?)"),
-					org, p.Name, SourceAPI, int64(1), string(p.Spec), now, now); err != nil {
+					org, p.Name, SourceAPI, first, string(p.Spec), now, now); err != nil {
 					return false, fmt.Errorf("creating %s %q: %w", k, p.Name, err)
 				}
 				continue

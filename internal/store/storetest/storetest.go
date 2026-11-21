@@ -29,6 +29,7 @@ func Run(t *testing.T, open func(t *testing.T) *store.Store) {
 		{"Delete", testDelete},
 		{"Revision", testRevision},
 		{"AllKinds", testAllKinds},
+		{"VersionNotReused", testVersionNotReused},
 	}
 	tests = append(tests, provisionTests...)
 	tests = append(tests, auditTests...)
@@ -199,16 +200,38 @@ func testRevision(t *testing.T, st *store.Store, org string) {
 func testAllKinds(t *testing.T, st *store.Store, org string) {
 	ctx := context.Background()
 	for _, k := range store.Kinds {
-		mustCreate(t, st, org, k, "x", string(k))
+		created := mustCreate(t, st, org, k, "x", string(k))
 		got, err := st.Get(ctx, org, k, "x")
-		if err != nil || specValue(t, got.Spec) != string(k) {
+		if err != nil || specValue(t, got.Spec) != string(k) || got.Version != created.Version {
 			t.Errorf("%s: got %+v, %v", k, got, err)
 		}
-		if err := st.Delete(ctx, org, k, "x", 1); err != nil {
+		if err := st.Delete(ctx, org, k, "x", created.Version); err != nil {
 			t.Errorf("%s: Delete: %v", k, err)
 		}
 	}
 	if _, err := st.Get(ctx, org, store.Kind("nope"), "x"); err == nil {
 		t.Error("unknown kind accepted")
+	}
+}
+
+// testVersionNotReused: a row made again under a deleted row's name starts above every
+// version the old row had, so a stale If-Match cannot change the new one.
+func testVersionNotReused(t *testing.T, st *store.Store, org string) {
+	ctx := context.Background()
+	first := mustCreate(t, st, org, store.KindRules, "r", "a")
+	if _, err := st.Update(ctx, org, store.KindRules, "r", first.Version, spec("b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Delete(ctx, org, store.KindRules, "r", first.Version+1); err != nil {
+		t.Fatal(err)
+	}
+	again := mustCreate(t, st, org, store.KindRules, "r", "c")
+	if again.Version <= first.Version+1 {
+		t.Fatalf("the new row starts at version %d, which the old row had", again.Version)
+	}
+	for v := first.Version; v <= first.Version+1; v++ {
+		if _, err := st.Update(ctx, org, store.KindRules, "r", v, spec("stale")); !errors.Is(err, store.ErrVersionConflict) {
+			t.Fatalf("a stale version %d reached the new row: %v", v, err)
+		}
 	}
 }
