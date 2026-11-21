@@ -34,7 +34,17 @@ type authWrite struct {
 	MaxSessions        int               `json:"max_sessions,omitempty"`
 }
 
-var reference = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}`)
+var (
+	// envReference is a whole value that is one reference, so no literal can ride along.
+	envReference = regexp.MustCompile(`^\$\{[A-Za-z_][A-Za-z0-9_]*\}$`)
+	// headerReference also allows an auth scheme word in front, as in Bearer ${TOKEN}.
+	headerReference = regexp.MustCompile(`^(?:(?i:bearer|basic|token|apikey|key) )?\$\{[A-Za-z_][A-Za-z0-9_]*\}$`)
+)
+
+// loaderEnv are variables that change which code a program loads. With an allowlist of
+// commands in place, setting them through the API would get around it.
+var loaderEnv = []string{"PATH", "LD_*", "DYLD_*", "NODE_OPTIONS", "NODE_PATH", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME",
+	"RUBYOPT", "RUBYLIB", "PERL5OPT", "PERL5LIB", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "BASH_ENV", "ENV"}
 
 // secretHeader reports whether a header's value is likely a credential.
 func secretHeader(name string) bool {
@@ -86,23 +96,45 @@ func (h *handler) decodeServer(raw []byte, _ json.RawMessage) (string, json.RawM
 		}
 	}
 	for k, v := range cfg.Env {
-		if !reference.MatchString(v) {
-			return "", nil, invalid("env."+k, "env values must be ${VAR} references to airlock's environment, so no secret is stored")
+		if !envReference.MatchString(v) {
+			return "", nil, invalid("env."+k, "an env value must be one ${VAR} reference to airlock's environment, so no secret is stored")
 		}
 	}
 	for field, headers := range map[string]map[string]string{"auth.headers": cfg.Auth.Headers, "auth.discovery_headers": cfg.Auth.DiscoveryHeaders} {
 		for k, v := range headers {
-			if secretHeader(k) && !reference.MatchString(v) {
-				return "", nil, invalid(field+"."+k, "the value of %s must use a ${VAR} reference to airlock's environment, so no secret is stored", k)
+			if secretHeader(k) && !headerReference.MatchString(v) {
+				return "", nil, invalid(field+"."+k, "the value of %s must be a ${VAR} reference to airlock's environment, optionally after a scheme such as Bearer, so no secret is stored", k)
 			}
 		}
 	}
-	if allowed := h.d.Process.Stdio.AllowedCommands; cfg.Transport == backend.TransportStdio && len(allowed) > 0 &&
-		!slices.ContainsFunc(allowed, func(p string) bool { return glob.Match(p, cfg.Command) }) {
-		return "", nil, invalid("command", "command %q is not in stdio.allowed_commands", cfg.Command)
+	if err := h.checkCommand(cfg); err != nil {
+		return "", nil, err
 	}
 	spec, err := json.Marshal(cfg)
 	return cfg.Name, spec, err
+}
+
+// checkCommand holds a stdio server to stdio.allowed_commands when the file sets it.
+func (h *handler) checkCommand(cfg backend.Config) error {
+	allowed := h.d.Process.Stdio.AllowedCommands
+	if cfg.Transport != backend.TransportStdio || len(allowed) == 0 {
+		return nil
+	}
+	if slices.Contains(strings.FieldsFunc(cfg.Command, func(r rune) bool { return r == '/' || r == '\\' }), "..") {
+		return invalid("command", "command %q may not climb out of a directory with ..", cfg.Command)
+	}
+	if !slices.ContainsFunc(allowed, func(p string) bool { return glob.Match(p, cfg.Command) }) {
+		return invalid("command", "command %q is not in stdio.allowed_commands", cfg.Command)
+	}
+	if cfg.Dir != "" {
+		return invalid("dir", "dir cannot be set through the API while stdio.allowed_commands is set, since a relative command would resolve against it")
+	}
+	for k := range cfg.Env {
+		if slices.ContainsFunc(loaderEnv, func(p string) bool { return glob.Match(p, strings.ToUpper(k)) }) {
+			return invalid("env."+k, "%s changes which code a program loads, so it cannot be set through the API while stdio.allowed_commands is set", k)
+		}
+	}
+	return nil
 }
 
 func serverWriteForm(spec json.RawMessage) (json.RawMessage, error) {
@@ -119,16 +151,16 @@ func serverWriteForm(spec json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(out)
 }
 
-// secretValues shows each value as its reference, as a plain value when it cannot be a
-// secret, or only as set.
-func secretValues(m map[string]string, plainOK func(string) bool) map[string]any {
+// secretValues shows each value as its reference when it is nothing but one, as a plain value
+// when it cannot be a secret, or only as set.
+func secretValues(m map[string]string, ref *regexp.Regexp, plainOK func(string) bool) map[string]any {
 	if len(m) == 0 {
 		return nil
 	}
 	out := make(map[string]any, len(m))
 	for k, v := range m {
 		switch {
-		case reference.MatchString(v):
+		case ref.MatchString(v):
 			out[k] = map[string]any{"ref": v}
 		case plainOK(k):
 			out[k] = map[string]any{"value": v}
@@ -152,7 +184,7 @@ func (h *handler) viewServer(row store.Row) (map[string]any, error) {
 	}
 	set("command", cfg.Command, cfg.Command != "")
 	set("args", cfg.Args, len(cfg.Args) > 0)
-	set("env", secretValues(cfg.Env, func(string) bool { return false }), len(cfg.Env) > 0)
+	set("env", secretValues(cfg.Env, envReference, func(string) bool { return false }), len(cfg.Env) > 0)
 	set("dir", cfg.Dir, cfg.Dir != "")
 	set("url", cfg.URL, cfg.URL != "")
 	set("call_timeout", formatDuration(cfg.CallTimeout), cfg.CallTimeout != 0)
@@ -163,10 +195,10 @@ func (h *handler) viewServer(row store.Row) (map[string]any, error) {
 		a["mode"] = cfg.Auth.Mode
 	}
 	if len(cfg.Auth.Headers) > 0 {
-		a["headers"] = secretValues(cfg.Auth.Headers, notSecret)
+		a["headers"] = secretValues(cfg.Auth.Headers, headerReference, notSecret)
 	}
 	if len(cfg.Auth.DiscoveryHeaders) > 0 {
-		a["discovery_headers"] = secretValues(cfg.Auth.DiscoveryHeaders, notSecret)
+		a["discovery_headers"] = secretValues(cfg.Auth.DiscoveryHeaders, headerReference, notSecret)
 	}
 	if cfg.Auth.SessionIdleTimeout != 0 {
 		a["session_idle_timeout"] = formatDuration(cfg.Auth.SessionIdleTimeout)

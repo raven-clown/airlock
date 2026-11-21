@@ -222,6 +222,11 @@ func TestServers(t *testing.T) {
 		field string
 	}{
 		{"literal env", map[string]any{"name": "a", "transport": "stdio", "command": "mcp-a", "env": map[string]string{"TOKEN": "hunter2"}}, "env.TOKEN"},
+		{"literal beside a reference", map[string]any{"name": "a", "transport": "stdio", "command": "mcp-a", "env": map[string]string{"TOKEN": "hunter2${X}"}}, "env.TOKEN"},
+		{"literal as a scheme", map[string]any{"name": "b", "transport": "streamable_http", "url": "http://b", "auth": map[string]any{"headers": map[string]string{"Authorization": "hunter2 ${X}"}}}, "auth.headers.Authorization"},
+		{"climbing command", map[string]any{"name": "c", "transport": "stdio", "command": "mcp-x/../../bin/sh"}, "command"},
+		{"dir with an allowlist", map[string]any{"name": "c", "transport": "stdio", "command": "mcp-x", "dir": "/tmp"}, "dir"},
+		{"loader env", map[string]any{"name": "c", "transport": "stdio", "command": "mcp-x", "env": map[string]string{"LD_PRELOAD": "${EVIL}"}}, "env.LD_PRELOAD"},
 		{"literal secret header", map[string]any{"name": "b", "transport": "streamable_http", "url": "http://b", "auth": map[string]any{"headers": map[string]string{"X-Api-Key": "hunter2"}}}, "auth.headers.X-Api-Key"},
 		{"command not allowed", map[string]any{"name": "c", "transport": "stdio", "command": "rm"}, "command"},
 		{"bad duration", map[string]any{"name": "d", "transport": "stdio", "command": "mcp-d", "call_timeout": "soon"}, "call_timeout"},
