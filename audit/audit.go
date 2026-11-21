@@ -10,8 +10,15 @@ import (
 
 // Event is one audit record.
 type Event struct {
-	Time       time.Time      `json:"time"`
-	Kind       string         `json:"kind"`
+	// ID is set on records read back from the store.
+	ID   int64     `json:"id,omitempty"`
+	Time time.Time `json:"time"`
+	Kind string    `json:"kind"`
+	// Action, Resource and Route describe an admin write, such as create, rules/eng and
+	// POST /admin/v1/rules.
+	Action     string         `json:"action,omitempty"`
+	Resource   string         `json:"resource,omitempty"`
+	Route      string         `json:"route,omitempty"`
 	RequestID  string         `json:"request_id,omitempty"`
 	TraceID    string         `json:"trace_id,omitempty"`
 	SessionID  string         `json:"session_id,omitempty"`

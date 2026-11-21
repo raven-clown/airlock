@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,21 +16,26 @@ import (
 
 	"github.com/raven-clown/airlock/auth/apikey"
 	"github.com/raven-clown/airlock/backend"
+	"github.com/raven-clown/airlock/internal/limits"
 	"github.com/raven-clown/airlock/internal/naming"
 	"github.com/raven-clown/airlock/policy/rules"
 )
 
 // Config is the whole config file.
 type Config struct {
-	ListenAddr   string           `yaml:"listen_addr"`
-	Storage      Storage          `yaml:"storage"`
-	Stdio        StdioConfig      `yaml:"stdio"`
-	Audit        Audit            `yaml:"audit"`
-	Settings     Settings         `yaml:"settings"`
-	APIKeys      []apikey.Key     `yaml:"api_keys"`
-	Servers      []backend.Config `yaml:"servers"`
-	Rules        []rules.Rule     `yaml:"rules"`
-	RoleBindings []RoleBinding    `yaml:"role_bindings"`
+	ListenAddr      string           `yaml:"listen_addr"`
+	Storage         Storage          `yaml:"storage"`
+	Stdio           StdioConfig      `yaml:"stdio"`
+	Audit           Audit            `yaml:"audit"`
+	Telemetry       Telemetry        `yaml:"telemetry"`
+	Limits          LimitsConfig     `yaml:"limits"`
+	Settings        Settings         `yaml:"settings"`
+	APIKeys         []apikey.Key     `yaml:"api_keys"`
+	Servers         []backend.Config `yaml:"servers"`
+	Rules           []rules.Rule     `yaml:"rules"`
+	RoleBindings    []RoleBinding    `yaml:"role_bindings"`
+	Profiles        []limits.Spec    `yaml:"profiles"`
+	ProfileBindings []limits.Binding `yaml:"profile_bindings"`
 }
 
 // Storage selects the database.
@@ -38,10 +44,49 @@ type Storage struct {
 	DSN    string `yaml:"dsn"`
 }
 
+// Telemetry says where traces go.
+type Telemetry struct {
+	// OTLPEndpoint is the base URL of an OTLP/HTTP collector. Empty turns tracing off.
+	OTLPEndpoint string            `yaml:"otlp_endpoint"`
+	OTLPHeaders  map[string]string `yaml:"otlp_headers"`
+	// SampleRatio is the share of new traces recorded, from 0 to 1. Zero means all.
+	SampleRatio float64 `yaml:"sample_ratio"`
+}
+
+// LimitsConfig holds the per-replica limits that are not part of a profile.
+type LimitsConfig struct {
+	// MaxInflight caps the requests one replica serves at once. Zero means no cap.
+	MaxInflight int64 `yaml:"max_inflight"`
+}
+
 // Settings are stored in the settings table, one row per top-level key.
 type Settings struct {
 	AllowedOrigins []string `json:"allowed_origins,omitempty" yaml:"allowed_origins"`
+	// PublicURL is where clients reach airlock, used in the protected resource metadata.
+	// Empty means the scheme and host of each request.
+	PublicURL      string `json:"public_url,omitempty" yaml:"public_url"`
+	OIDC           *OIDC  `json:"oidc,omitempty" yaml:"oidc"`
+	DefaultProfile string `json:"default_profile,omitempty" yaml:"default_profile"`
+	OrgProfile     string `json:"org_profile,omitempty" yaml:"org_profile"`
 }
+
+// OIDC says which tokens are accepted and how their claims become an identity.
+type OIDC struct {
+	Issuer   string `json:"issuer" yaml:"issuer"`
+	Audience string `json:"audience" yaml:"audience"`
+	// JWKSURL is where the signing keys are. Empty means the issuer's discovery document.
+	JWKSURL      string `json:"jwks_url,omitempty" yaml:"jwks_url"`
+	SubjectClaim string `json:"subject_claim,omitempty" yaml:"subject_claim"`
+	GroupsClaim  string `json:"groups_claim,omitempty" yaml:"groups_claim"`
+	ProfileClaim string `json:"profile_claim,omitempty" yaml:"profile_claim"`
+}
+
+// Claim defaults.
+const (
+	DefaultSubjectClaim = "sub"
+	DefaultGroupsClaim  = "groups"
+	DefaultProfileClaim = "tier"
+)
 
 // Admin API roles.
 const (
@@ -100,7 +145,9 @@ func OSEnv() Env {
 }
 
 // processKeys are expanded at load time. The rest are resources whose ${VAR} references are kept.
-var processKeys = map[string]bool{"listen_addr": true, "storage": true, "stdio": true, "audit": true, "settings": true}
+var processKeys = map[string]bool{
+	"listen_addr": true, "storage": true, "stdio": true, "audit": true, "settings": true, "telemetry": true, "limits": true,
+}
 
 // Default returns the config used when no file is given.
 func Default() *Config {
@@ -278,7 +325,70 @@ func (c *Config) normalize() error {
 	if c.Storage.DSN == "" {
 		return errors.New("storage.dsn: required")
 	}
+	if r := c.Telemetry.SampleRatio; r < 0 || r > 1 {
+		return errors.New("telemetry.sample_ratio: must be from 0 to 1")
+	}
+	if c.Telemetry.OTLPEndpoint != "" && !isHTTPURL(c.Telemetry.OTLPEndpoint) {
+		// The value is not repeated, since it can hold a collector's key.
+		return errors.New("telemetry.otlp_endpoint: must be an http or https URL of an OTLP/HTTP collector")
+	}
+	if c.Limits.MaxInflight < 0 {
+		return errors.New("limits.max_inflight: must be zero or more")
+	}
+	if err := c.checkSettings(); err != nil {
+		return err
+	}
+	if _, err := c.LimitsConfig(); err != nil {
+		return err
+	}
 	return c.checkRoleBindings()
+}
+
+// Validate checks a config built from the store the way Parse checks a file, filling in
+// the same defaults.
+func Validate(c *Config) error { return c.normalize() }
+
+func (c *Config) checkSettings() error {
+	if c.Settings.PublicURL != "" && !isHTTPURL(c.Settings.PublicURL) {
+		return fmt.Errorf("settings.public_url: %q must be an http or https URL", c.Settings.PublicURL)
+	}
+	o := c.Settings.OIDC
+	if o == nil {
+		return nil
+	}
+	switch {
+	case !isHTTPURL(o.Issuer):
+		return fmt.Errorf("settings.oidc.issuer: %q must be an http or https URL", o.Issuer)
+	case o.Audience == "":
+		return errors.New("settings.oidc.audience: required")
+	case o.JWKSURL != "" && !isHTTPURL(o.JWKSURL):
+		return fmt.Errorf("settings.oidc.jwks_url: %q must be an http or https URL", o.JWKSURL)
+	}
+	return nil
+}
+
+func isHTTPURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+// LimitsConfig parses the profiles and checks the bindings and the default and org profiles.
+func (c *Config) LimitsConfig() (limits.Config, error) {
+	out := limits.Config{Bindings: c.ProfileBindings, Default: c.Settings.DefaultProfile, Org: c.Settings.OrgProfile}
+	for i, s := range c.Profiles {
+		p, err := limits.ParseProfile(s)
+		if err != nil {
+			return limits.Config{}, fmt.Errorf("profiles[%d]: %w", i, err)
+		}
+		out.Profiles = append(out.Profiles, p)
+	}
+	if err := out.Validate(); err != nil {
+		if strings.HasPrefix(err.Error(), "default_profile") || strings.HasPrefix(err.Error(), "org_profile") {
+			return limits.Config{}, fmt.Errorf("settings.%w", err)
+		}
+		return limits.Config{}, err
+	}
+	return out, nil
 }
 
 func (c *Config) checkRoleBindings() error {

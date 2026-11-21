@@ -194,7 +194,7 @@ func TestServeHTTP(t *testing.T) {
 	waitFor(t, "audit line on stdout", func() bool { return strings.Contains(stdout.String(), `"log":"audit"`) })
 	st := openTestStore(t, path)
 	waitFor(t, "audit row in the store", func() bool {
-		events, err := st.ListAudit(ctx, store.DefaultOrg, 0)
+		events, err := st.ListAudit(ctx, store.DefaultOrg, store.AuditQuery{})
 		return err == nil && len(events) > 0 && events[0].Tool == "echo" && events[0].Outcome == "ok"
 	})
 

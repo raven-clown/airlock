@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/raven-clown/airlock/audit"
+
 	// Registers the sqlite driver.
 	_ "modernc.org/sqlite"
 )
@@ -124,7 +126,8 @@ func (s *Store) Revision(ctx context.Context, org string) (int64, error) {
 
 // write runs fn in a transaction that holds the org's revision row, and bumps the
 // revision when fn reports a change. Holding the row serializes writers per org on Postgres.
-func (s *Store) write(ctx context.Context, org string, fn func(tx *sql.Tx) (bool, error)) error {
+// events are stored in the same transaction, so a change and its audit record commit together.
+func (s *Store) write(ctx context.Context, org string, fn func(tx *sql.Tx) (bool, error), events ...audit.Event) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
@@ -144,6 +147,9 @@ func (s *Store) write(ctx context.Context, org string, fn func(tx *sql.Tx) (bool
 		if _, err := tx.ExecContext(ctx, s.q("UPDATE revision SET value = value + 1 WHERE org_id = ?"), org); err != nil {
 			return fmt.Errorf("bumping revision: %w", err)
 		}
+	}
+	if err := s.insertEvents(ctx, tx, org, events); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing: %w", err)

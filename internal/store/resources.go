@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/raven-clown/airlock/audit"
 )
 
 // Kind names a resource table.
@@ -14,15 +16,17 @@ type Kind string
 
 // Resource kinds. Each is its own table with the same columns.
 const (
-	KindServers      Kind = "servers"
-	KindRules        Kind = "rules"
-	KindAPIKeys      Kind = "api_keys"
-	KindRoleBindings Kind = "role_bindings"
-	KindSettings     Kind = "settings"
+	KindServers         Kind = "servers"
+	KindRules           Kind = "rules"
+	KindAPIKeys         Kind = "api_keys"
+	KindRoleBindings    Kind = "role_bindings"
+	KindSettings        Kind = "settings"
+	KindProfiles        Kind = "profiles"
+	KindProfileBindings Kind = "profile_bindings"
 )
 
 // Kinds lists every resource kind.
-var Kinds = []Kind{KindServers, KindRules, KindAPIKeys, KindRoleBindings, KindSettings}
+var Kinds = []Kind{KindServers, KindRules, KindAPIKeys, KindRoleBindings, KindSettings, KindProfiles, KindProfileBindings}
 
 // Where a row came from.
 const (
@@ -115,8 +119,8 @@ func (s *Store) List(ctx context.Context, org string, k Kind, after string, limi
 	return out, nil
 }
 
-// Create adds a row owned by the API.
-func (s *Store) Create(ctx context.Context, org string, k Kind, name string, spec json.RawMessage) (Row, error) {
+// Create adds a row owned by the API, and stores events with it.
+func (s *Store) Create(ctx context.Context, org string, k Kind, name string, spec json.RawMessage, events ...audit.Event) (Row, error) {
 	t, err := table(k)
 	if err != nil {
 		return Row{}, err
@@ -135,7 +139,7 @@ func (s *Store) Create(ctx context.Context, org string, k Kind, name string, spe
 			return false, fmt.Errorf("creating %s %q: %w", k, name, err)
 		}
 		return true, nil
-	})
+	}, events...)
 	if err != nil {
 		return Row{}, err
 	}
@@ -166,8 +170,9 @@ func checkWritable(k Kind, name, source string, have, want int64, err error) err
 	return nil
 }
 
-// Update replaces the spec of an API row whose version is version, and bumps the version.
-func (s *Store) Update(ctx context.Context, org string, k Kind, name string, version int64, spec json.RawMessage) (Row, error) {
+// Update replaces the spec of an API row whose version is version, bumps the version, and
+// stores events with it.
+func (s *Store) Update(ctx context.Context, org string, k Kind, name string, version int64, spec json.RawMessage, events ...audit.Event) (Row, error) {
 	t, err := table(k)
 	if err != nil {
 		return Row{}, err
@@ -188,15 +193,15 @@ func (s *Store) Update(ctx context.Context, org string, k Kind, name string, ver
 			return false, fmt.Errorf("reading %s %q: %w", k, name, err)
 		}
 		return true, nil
-	})
+	}, events...)
 	if err != nil {
 		return Row{}, err
 	}
 	return r, nil
 }
 
-// Delete removes an API row whose version is version.
-func (s *Store) Delete(ctx context.Context, org string, k Kind, name string, version int64) error {
+// Delete removes an API row whose version is version, and stores events with it.
+func (s *Store) Delete(ctx context.Context, org string, k Kind, name string, version int64, events ...audit.Event) error {
 	t, err := table(k)
 	if err != nil {
 		return err
@@ -210,5 +215,5 @@ func (s *Store) Delete(ctx context.Context, org string, k Kind, name string, ver
 			return false, fmt.Errorf("deleting %s %q: %w", k, name, err)
 		}
 		return true, nil
-	})
+	}, events...)
 }

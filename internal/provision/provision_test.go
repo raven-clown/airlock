@@ -36,6 +36,12 @@ role_bindings:
   - name: admins
     subjects: ["group:ops"]
     role: admin
+profiles:
+  - name: free
+    limits:
+      tools.calls: {rate: 30/m}
+profile_bindings:
+  - {name: ci, subject: "key:ci", profile: free}
 `
 
 func parse(t *testing.T, s string) *config.Config {
@@ -63,11 +69,13 @@ func TestRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[store.Kind][]string{
-		store.KindServers:      {"github"},
-		store.KindRules:        {"ci"},
-		store.KindAPIKeys:      {"ci"},
-		store.KindRoleBindings: {"admins"},
-		store.KindSettings:     {"allowed_origins"},
+		store.KindServers:         {"github"},
+		store.KindRules:           {"ci"},
+		store.KindAPIKeys:         {"ci"},
+		store.KindRoleBindings:    {"admins"},
+		store.KindSettings:        {"allowed_origins"},
+		store.KindProfiles:        {"free"},
+		store.KindProfileBindings: {"ci"},
 	}
 	for k, names := range want {
 		if len(rows[k]) != len(names) {

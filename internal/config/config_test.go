@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/raven-clown/airlock/policy/rules"
 )
 
 func envOf(m map[string]string) Env {
@@ -218,6 +220,19 @@ func TestValidate(t *testing.T) {
 		{"binding duplicate", "role_bindings:\n  - {name: a, subjects: [\"*\"], role: member}\n  - {name: a, subjects: [\"*\"], role: viewer}\n", `role_bindings[1].name: duplicate "a"`},
 		{"binding role", "role_bindings:\n  - {name: a, subjects: [\"*\"], role: owner}\n", "role_bindings[0].role: must be admin, member or viewer"},
 		{"binding subjects", "role_bindings:\n  - {name: a, role: admin}\n", "role_bindings[0].subjects: required"},
+		{"profile limit", "profiles:\n  - {name: p, limits: {tools.bytes: 1}}\n", `profiles[0]: profile "p": unknown limit "tools.bytes"`},
+		{"profile rate", "profiles:\n  - {name: p, limits: {requests: {rate: fast}}}\n", `profiles[0]: profile "p": requests: rate: rate "fast"`},
+		{"profile name", "profiles:\n  - {limits: {}}\n", "profiles[0].name: required"},
+		{"profile binding", "profiles:\n  - {name: p}\nprofile_bindings:\n  - {name: b, subject: \"user:a\", profile: q}\n", `profile_bindings[0].profile: unknown profile "q"`},
+		{"default profile", "settings:\n  default_profile: gold\n", `settings.default_profile: unknown profile "gold"`},
+		{"org profile", "settings:\n  org_profile: gold\n", `settings.org_profile: unknown profile "gold"`},
+		{"oidc issuer", "settings:\n  oidc: {issuer: idp, audience: airlock}\n", `settings.oidc.issuer: "idp" must be an http or https URL`},
+		{"oidc audience", "settings:\n  oidc: {issuer: \"https://idp\"}\n", "settings.oidc.audience: required"},
+		{"oidc jwks", "settings:\n  oidc: {issuer: \"https://idp\", audience: a, jwks_url: keys}\n", "settings.oidc.jwks_url"},
+		{"public url", "settings:\n  public_url: airlock.example\n", "settings.public_url"},
+		{"sample ratio", "telemetry:\n  sample_ratio: 2\n", "telemetry.sample_ratio: must be from 0 to 1"},
+		{"otlp endpoint", "telemetry:\n  otlp_endpoint: \"collector:4317\"\n", "telemetry.otlp_endpoint: must be an http or https URL"},
+		{"max inflight", "limits:\n  max_inflight: -1\n", "limits.max_inflight: must be zero or more"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -226,6 +241,54 @@ func TestValidate(t *testing.T) {
 				t.Errorf("error = %v, want it to contain %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestProfilesAndTelemetry(t *testing.T) {
+	doc := `
+telemetry:
+  otlp_endpoint: http://collector:4318
+  otlp_headers: {x-key: "${KEY}"}
+  sample_ratio: 0.5
+limits:
+  max_inflight: 100
+settings:
+  default_profile: free
+  oidc: {issuer: "https://idp.example.com", audience: airlock}
+profiles:
+  - name: free
+    priority: 1
+    limits:
+      requests: {rate: 60/m, concurrency: 4}
+      tools.calls: {rate: 30/m}
+      llm.tokens: {per_day: 100000}
+profile_bindings:
+  - {name: ops, subject: "group:ops", profile: free}
+`
+	cfg, err := Parse([]byte(doc), envOf(map[string]string{"KEY": "secret"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Telemetry.OTLPHeaders["x-key"] != "secret" || cfg.Telemetry.SampleRatio != 0.5 || cfg.Limits.MaxInflight != 100 {
+		t.Fatalf("process keys: %+v %+v", cfg.Telemetry, cfg.Limits)
+	}
+	lc, err := cfg.LimitsConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lc.Profiles) != 1 || lc.Profiles[0].Requests.Concurrency != 4 || lc.Profiles[0].ToolCalls.Rate.Count != 30 || lc.Default != "free" || len(lc.Bindings) != 1 {
+		t.Fatalf("limits %+v", lc)
+	}
+	if cfg.Settings.OIDC.Audience != "airlock" {
+		t.Fatalf("oidc %+v", cfg.Settings.OIDC)
+	}
+}
+
+func TestValidateExported(t *testing.T) {
+	cfg := Default()
+	cfg.Rules = []rules.Rule{{Name: "r"}}
+	if err := Validate(cfg); err == nil {
+		t.Fatal("a rule with no subjects passed")
 	}
 }
 

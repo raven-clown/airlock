@@ -34,7 +34,7 @@ func TestRetention(t *testing.T) {
 		runRetention(ctx, st, store.DefaultOrg, time.Hour, 30*24*time.Hour, func() time.Time { return now }, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}()
 	waitFor(t, "the old record to go", func() bool {
-		events, err := st.ListAudit(context.Background(), store.DefaultOrg, 0)
+		events, err := st.ListAudit(context.Background(), store.DefaultOrg, store.AuditQuery{})
 		return err == nil && len(events) == 1 && events[0].Time.Equal(recent.Time)
 	})
 	cancel()

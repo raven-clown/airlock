@@ -44,6 +44,16 @@ func Rows(cfg *config.Config) (map[store.Kind]map[string]json.RawMessage, error)
 			return nil, err
 		}
 	}
+	for _, p := range cfg.Profiles {
+		if err := add(store.KindProfiles, p.Name, p); err != nil {
+			return nil, err
+		}
+	}
+	for _, b := range cfg.ProfileBindings {
+		if err := add(store.KindProfileBindings, b.Name, b); err != nil {
+			return nil, err
+		}
+	}
 	raw, err := json.Marshal(cfg.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("encoding settings: %w", err)

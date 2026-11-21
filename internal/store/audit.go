@@ -2,14 +2,16 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/raven-clown/airlock/audit"
 )
 
-const auditColumns = "occurred_at, kind, request_id, trace_id, session_id, instance, subject, groups_json, auth, project, server, tool, decision, rule, outcome, duration_ms, args_json, error"
+const auditColumns = "occurred_at, kind, request_id, trace_id, session_id, instance, subject, groups_json, auth, project, server, tool, decision, rule, outcome, duration_ms, args_json, error, action, resource, route"
 
 // InsertAudit stores events. It does not move the revision.
 func (s *Store) InsertAudit(ctx context.Context, org string, events []audit.Event) error {
@@ -18,7 +20,20 @@ func (s *Store) InsertAudit(ctx context.Context, org string, events []audit.Even
 		return fmt.Errorf("storing audit records: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	stmt, err := tx.PrepareContext(ctx, s.q("INSERT INTO audit_events (org_id, "+auditColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+	if err := s.insertEvents(ctx, tx, org, events); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("storing audit records: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) insertEvents(ctx context.Context, tx *sql.Tx, org string, events []audit.Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+	stmt, err := tx.PrepareContext(ctx, s.q("INSERT INTO audit_events (org_id, "+auditColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
 	if err != nil {
 		return fmt.Errorf("storing audit records: %w", err)
 	}
@@ -33,12 +48,10 @@ func (s *Store) InsertAudit(ctx context.Context, org string, events []audit.Even
 			return err
 		}
 		if _, err := stmt.ExecContext(ctx, org, millis(e.Time), e.Kind, e.RequestID, e.TraceID, e.SessionID, e.Instance, e.Subject,
-			groups, e.Auth, e.Project, e.Server, e.Tool, e.Decision, e.Rule, e.Outcome, e.DurationMS, args, e.Error); err != nil {
+			groups, e.Auth, e.Project, e.Server, e.Tool, e.Decision, e.Rule, e.Outcome, e.DurationMS, args, e.Error,
+			e.Action, e.Resource, e.Route); err != nil {
 			return fmt.Errorf("storing audit records: %w", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("storing audit records: %w", err)
 	}
 	return nil
 }
@@ -54,13 +67,46 @@ func jsonOrEmpty(v any, empty bool) (string, error) {
 	return string(b), nil
 }
 
-// ListAudit returns the newest events first. limit <= 0 means all.
-func (s *Store) ListAudit(ctx context.Context, org string, limit int) ([]audit.Event, error) {
-	query := "SELECT " + auditColumns + " FROM audit_events WHERE org_id = ? ORDER BY occurred_at DESC, id DESC"
+// AuditQuery filters ListAudit. Zero fields match everything.
+type AuditQuery struct {
+	Kind, Subject, Server, Tool, Outcome string
+	// Since is inclusive and Until exclusive.
+	Since, Until time.Time
+	// BeforeID returns only records older than that id, for paging.
+	BeforeID int64
+	// Limit <= 0 means all.
+	Limit int
+}
+
+// ListAudit returns the matching events, newest first.
+func (s *Store) ListAudit(ctx context.Context, org string, q AuditQuery) ([]audit.Event, error) {
+	where := []string{"org_id = ?"}
 	args := []any{org}
-	if limit > 0 {
+	for _, f := range []struct{ col, v string }{
+		{"kind", q.Kind}, {"subject", q.Subject}, {"server", q.Server}, {"tool", q.Tool}, {"outcome", q.Outcome},
+	} {
+		if f.v != "" {
+			where = append(where, f.col+" = ?")
+			args = append(args, f.v)
+		}
+	}
+	if !q.Since.IsZero() {
+		where = append(where, "occurred_at >= ?")
+		args = append(args, millis(q.Since))
+	}
+	if !q.Until.IsZero() {
+		where = append(where, "occurred_at < ?")
+		args = append(args, millis(q.Until))
+	}
+	if q.BeforeID > 0 {
+		where = append(where, "id < ?")
+		args = append(args, q.BeforeID)
+	}
+	// Newest first by id: ids follow insert order, which a page cursor needs to be stable.
+	query := "SELECT id, " + auditColumns + " FROM audit_events WHERE " + strings.Join(where, " AND ") + " ORDER BY id DESC"
+	if q.Limit > 0 {
 		query += " LIMIT ?"
-		args = append(args, limit)
+		args = append(args, q.Limit)
 	}
 	rows, err := s.db.QueryContext(ctx, s.q(query), args...)
 	if err != nil {
@@ -71,9 +117,10 @@ func (s *Store) ListAudit(ctx context.Context, org string, limit int) ([]audit.E
 	for rows.Next() {
 		var e audit.Event
 		var at int64
-		var groups, args string
-		if err := rows.Scan(&at, &e.Kind, &e.RequestID, &e.TraceID, &e.SessionID, &e.Instance, &e.Subject, &groups, &e.Auth,
-			&e.Project, &e.Server, &e.Tool, &e.Decision, &e.Rule, &e.Outcome, &e.DurationMS, &args, &e.Error); err != nil {
+		var groups, eargs string
+		if err := rows.Scan(&e.ID, &at, &e.Kind, &e.RequestID, &e.TraceID, &e.SessionID, &e.Instance, &e.Subject, &groups, &e.Auth,
+			&e.Project, &e.Server, &e.Tool, &e.Decision, &e.Rule, &e.Outcome, &e.DurationMS, &eargs, &e.Error,
+			&e.Action, &e.Resource, &e.Route); err != nil {
 			return nil, fmt.Errorf("listing audit records: %w", err)
 		}
 		e.Time = fromMillis(at)
@@ -82,8 +129,8 @@ func (s *Store) ListAudit(ctx context.Context, org string, limit int) ([]audit.E
 				return nil, fmt.Errorf("decoding audit groups: %w", err)
 			}
 		}
-		if args != "" {
-			if err := json.Unmarshal([]byte(args), &e.Args); err != nil {
+		if eargs != "" {
+			if err := json.Unmarshal([]byte(eargs), &e.Args); err != nil {
 				return nil, fmt.Errorf("decoding audit args: %w", err)
 			}
 		}
