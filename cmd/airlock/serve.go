@@ -86,7 +86,7 @@ func serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 	metrics.Revision(snap.Revision)
 	tracer, err := telemetry.NewTracer(telemetry.TracerConfig{
 		Endpoint: cfg.Telemetry.OTLPEndpoint, Headers: cfg.Telemetry.OTLPHeaders, SampleRatio: cfg.Telemetry.SampleRatio,
-		Version: version, Logger: log, Dropped: func(n int) { metrics.Dropped("otlp", n) },
+		Version: version, Logger: log, Dropped: func(n int) { metrics.Dropped("otlp", float64(n)) },
 	})
 	if err != nil {
 		return fail(err)
@@ -189,7 +189,7 @@ func report(ctx context.Context, m *telemetry.Metrics, pipe *audit.Pipeline, set
 	defer ticker.Stop()
 	for {
 		if n := pipe.Dropped(); n > dropped {
-			m.Dropped("audit", int(n-dropped))
+			m.Dropped("audit", float64(n-dropped))
 			dropped = n
 		}
 		for _, b := range set.All() {

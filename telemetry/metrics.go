@@ -120,9 +120,9 @@ func (m *Metrics) Limited(reason string) {
 }
 
 // Dropped counts n records or spans lost on the way to sink.
-func (m *Metrics) Dropped(sink string, n int) {
+func (m *Metrics) Dropped(sink string, n float64) {
 	if m != nil && n > 0 {
-		m.dropped.Add(float64(n), sink)
+		m.dropped.Add(n, sink)
 	}
 }
 
