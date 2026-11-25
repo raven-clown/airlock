@@ -127,6 +127,12 @@ rules:
     deny: ["github__delete_*"]
 ```
 
+`${NAME}` in a config value is read from the environment. It is an error when `NAME` is unset. `${NAME:-default}` uses `default` when `NAME` is unset or empty, so one file can be shared across environments. The default may be empty (`${NAME:-}`) and ends at the next `}`.
+
+```yaml
+listen_addr: "${AIRLOCK_LISTEN:-:8080}"
+```
+
 State lives in SQL, in `airlock.db` in the working directory by default. For teams and replicas, point every instance at one Postgres database:
 
 ```yaml

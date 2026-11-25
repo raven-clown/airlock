@@ -116,7 +116,7 @@ func TestUnknownKey(t *testing.T) {
 }
 
 func TestExpand(t *testing.T) {
-	env := envOf(map[string]string{"A": "1", "B": "two"}).Lookup
+	env := envOf(map[string]string{"A": "1", "B": "two", "EMPTY": ""}).Lookup
 	tests := []struct {
 		in, want, wantErr string
 	}{
@@ -125,6 +125,15 @@ func TestExpand(t *testing.T) {
 		{in: "plain", want: "plain"},
 		{in: "$A", want: "$A"},
 		{in: "${MISSING}", wantErr: "variable MISSING is not set"},
+		{in: "${A:-fallback}", want: "1"},
+		{in: "${MISSING:-:8080}", want: ":8080"},
+		{in: "${EMPTY:-fallback}", want: "fallback"},
+		{in: "${MISSING:-}", want: ""},
+		{in: "${MISSING:-x}${A:-y}", want: "x1"},
+		{in: "${A:-x}${MISSING}", wantErr: "variable MISSING is not set"},
+		{in: "$${A}}", want: "$1}"},
+		{in: "${A} # kept", want: "1 # kept"},
+		{in: "${MISSING-fallback}", want: "${MISSING-fallback}"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {

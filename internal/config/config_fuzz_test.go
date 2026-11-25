@@ -27,6 +27,9 @@ func FuzzExpand(f *testing.F) {
 	f.Add("$${A}}", "${A}")
 	f.Add("${", "")
 	f.Add("${A}${A}", "$")
+	f.Add("${A:-fallback}", "x")
+	f.Add("${A:-}", "")
+	f.Add("${A:-${}B}", "x")
 	f.Fuzz(func(t *testing.T, s, value string) {
 		if strings.Contains(value, "${") {
 			return
@@ -35,12 +38,25 @@ func FuzzExpand(f *testing.F) {
 		if err != nil {
 			t.Fatalf("Expand(%q) with every name set: %v", s, err)
 		}
-		if varRef.MatchString(out) && !varRef.MatchString(s) {
+		// An empty value selects the default, which can form a new ${NAME} with the
+		// text after the reference. A non-empty value is copied through as itself.
+		if value != "" && varRef.MatchString(out) && !varRef.MatchString(s) {
 			t.Fatalf("Expand(%q) = %q added a reference", s, out)
 		}
 		_, err = Expand(s, func(string) (string, bool) { return "", false })
-		if (err != nil) != varRef.MatchString(s) {
+		if (err != nil) != hasRequiredRef(s) {
 			t.Fatalf("Expand(%q) with no names set: err = %v", s, err)
 		}
 	})
+}
+
+// hasRequiredRef reports whether s contains a ${NAME} that Expand must resolve.
+// The default of ${NAME:-default} ends at the next }, so a ${...} inside it is not its own reference.
+func hasRequiredRef(s string) bool {
+	for _, m := range expandRef.FindAllStringSubmatch(s, -1) {
+		if m[2] == "" {
+			return true
+		}
+	}
+	return false
 }
